@@ -28,6 +28,10 @@ When a client calls saying *"everything is slow"* you have minutes to diagnose t
 
 Reports are saved to `/opt/server-health/logs/health_report_<timestamp>.txt` so you can build a history of incidents over time.
 
+## 📖 Runbook
+
+[![Runbook](https://img.shields.io/badge/Runbook-View%20Online-blue)](https://<acantu101>.github.io/<linx-support>/server-health-RUNBOOK.html)
+
 ---
 
 ## Features
