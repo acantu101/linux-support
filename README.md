@@ -30,7 +30,7 @@ Reports are saved to `/opt/server-health/logs/health_report_<timestamp>.txt` so 
 
 ## 📖 Runbook
 
-[![Runbook](https://img.shields.io/badge/Runbook-View%20Online-blue)](https://acantu101.github.io/linux-support/server-health-runbook.html)
+[📖 View Runbook](https://htmlpreview.github.io/?https://github.com/<user>/<repo>/blob/main/RUNBOOK.html)
 
 ---
 
