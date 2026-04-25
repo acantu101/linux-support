@@ -1,8 +1,8 @@
 # linux-support
 scripts to troubleshoot and investigate issues in a linux env
-# 🖥️ Trading Server Health Report
+# 🖥️ Server Health Report
 
-A comprehensive bash diagnostic script for Linux trading servers. Generates a full health report with color-coded alerts, threshold analysis, and a summary table — all saved to a log file for incident history.
+A comprehensive bash diagnostic script for Linux servers. Generates a full health report with color-coded alerts, threshold analysis, and a summary table — all saved to a log file for incident history.
 
 ---
 
@@ -26,7 +26,7 @@ A comprehensive bash diagnostic script for Linux trading servers. Generates a fu
 
 When a client calls saying *"everything is slow"* you have minutes to diagnose the problem. This script gives you a full-system snapshot in one command — covering CPU, memory, disk, network, services, logs, and more — with clear `✅ OK`, `⚠️ WARN`, and `🔴 CRIT` indicators so you know exactly where to look.
 
-Reports are saved to `/opt/trading/logs/health_report_<timestamp>.txt` so you can build a history of incidents over time.
+Reports are saved to `/opt/server-health/logs/health_report_<timestamp>.txt` so you can build a history of incidents over time.
 
 ---
 
@@ -78,16 +78,16 @@ apt install sysstat procps iproute2 lsof bc -y
 
 ```bash
 # clone the repo
-git clone https://github.com/yourusername/trading-server-health.git
+git clone https://github.com/yourusername/server-health-report.git
 
-# copy script to trading bin directory
-cp server_health_report.sh /opt/trading/bin/
+# copy script to server-health bin directory
+cp server_health_report.sh /opt/server-health/bin/
 
 # make it executable
-chmod 755 /opt/trading/bin/server_health_report.sh
+chmod 755 /opt/server-health/bin/server_health_report.sh
 
 # create log directory
-mkdir -p /opt/trading/logs
+mkdir -p /opt/server-health/logs
 ```
 
 ---
@@ -96,7 +96,7 @@ mkdir -p /opt/trading/logs
 
 ```bash
 # run as root
-bash /opt/trading/bin/server_health_report.sh
+bash /opt/server-health/bin/server_health_report.sh
 ```
 
 > **Note:** Must be run as `root` to access all `/proc` entries, `dmesg`, and full `lsof` output.
@@ -186,10 +186,10 @@ crontab -e
 Add the line:
 
 ```
-*/5 * * * * bash /opt/trading/bin/server_health_report.sh
+*/5 * * * * bash /opt/server-health/bin/server_health_report.sh
 ```
 
-Reports accumulate in `/opt/trading/logs/` — useful for post-incident analysis:
+Reports accumulate in `/opt/server-health/logs/` — useful for post-incident analysis:
 
 ```
 health_report_20260425_093000.txt
@@ -201,7 +201,7 @@ health_report_20260425_094500.txt   ← degradation visible
 To clean up old reports automatically (keep last 7 days):
 
 ```bash
-find /opt/trading/logs -name "health_report_*.txt" -mtime +7 -delete
+find /opt/server-health/logs -name "health_report_*.txt" -mtime +7 -delete
 ```
 
 ---
@@ -252,5 +252,5 @@ MIT License — free to use, modify, and distribute.
 
 ---
 
-> Built for Linux trading server environments running Ubuntu/Debian with systemd.
+> Built for Linux server environments running Ubuntu/Debian with systemd.
 > Tested on Ubuntu 24.04 (Noble).
