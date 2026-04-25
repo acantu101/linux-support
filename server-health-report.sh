@@ -1,8 +1,8 @@
 #!/bin/bash
 # ============================================================
-#  TRADING SERVER HEALTH REPORT
+#  SERVER HEALTH REPORT
 #  Run as root: bash server_health_report.sh
-#  Output: /opt/trading/logs/health_report_<date>.txt
+#  Output: /opt/server-health/logs/health_report_<date>.txt
 # ============================================================
 
 # ---------- COLORS ----------
@@ -14,7 +14,7 @@ BLD='\033[1m'
 RST='\033[0m'
 
 # ---------- OUTPUT FILE ----------
-REPORT_DIR="/opt/trading/logs"
+REPORT_DIR="/opt/server-health/logs"
 mkdir -p "$REPORT_DIR"
 REPORT="$REPORT_DIR/health_report_$(date +%Y%m%d_%H%M%S).txt"
 exec > >(tee -a "$REPORT") 2>&1
@@ -50,7 +50,7 @@ LOAD_WARN=0.8;      LOAD_CRIT=1.2   # multiplier of core count
 
 # ============================================================
 echo ""
-echo -e "${BLD}  TRADING SERVER HEALTH REPORT${RST}"
+echo -e "${BLD}  SERVER HEALTH REPORT${RST}"
 echo -e "  Generated : $(date)"
 echo -e "  Hostname  : $(hostname)"
 echo -e "  Uptime    : $(uptime -p)"
@@ -80,7 +80,7 @@ if [ "$CPU_USED" != "N/A" ]; then
     crit "CPU usage ${CPU_USED}% — server is overwhelmed!"
     fix "1. Find the hog:          ps aux --sort=-%cpu | head -10
 2. Watch it live:          top -b -n 1 | head -20
-3. Check if it is trading: ps aux | grep trading
+3. Check if it is for process with name: ps aux | grep <name>
 4. Trace what it is doing: strace -p <PID>
 5. Graceful restart:       systemctl restart <service>
 6. Force kill (last resort): kill -9 <PID>"
@@ -101,15 +101,15 @@ if [ "${IOWAIT_INT:-0}" -ge "$IOWAIT_CRIT" ]; then
   fix "1. Confirm which disk:      iostat -x 1 5
 2. Find disk hog process:  iotop -o   (apt install iotop)
 3. Check disk utilisation: iostat -x 1 | grep -v loop
-4. Check if logs filling:  du -h /opt/trading/logs | sort -rh | head -10
+4. Check if logs filling:  du -h /opt/server-health/logs | sort -rh | head -10
 5. Check disk health:      smartctl -a /dev/sda
-6. Free up space:          find /opt/trading/logs -name '*.log' -mtime +7 -delete
+6. Free up space:          find /opt/server-health/logs -name '*.log' -mtime +7 -delete
 7. Clear journal logs:     journalctl --vacuum-time=3d"
 elif [ "${IOWAIT_INT:-0}" -ge "$IOWAIT_WARN" ]; then
   warn "%iowait ${CPU_IOWAIT}% — disk may be slow"
   fix "1. Watch disk I/O:          iostat -x 1 5
 2. Find writing processes: iotop -o
-3. Check log growth:       ls -lth /opt/trading/logs/ | head -10"
+3. Check log growth:       ls -lth /opt/server-health/logs/ | head -10"
 else
   ok "%iowait ${CPU_IOWAIT}% — no disk bottleneck"
 fi
@@ -223,7 +223,7 @@ if [ "$SWAP_INT" -ge "$SWAP_CRIT" ]; then
 3. Restart leaking service: systemctl restart <service>
 4. Reduce swappiness:       echo 10 > /proc/sys/vm/swappiness
 5. Kill non-critical proc:  kill -15 <PID>
-6. Escalate if trading svc: contact senior engineer immediately"
+6. Escalate svc: contact senior engineer immediately"
 elif [ "$SWAP_INT" -ge "$SWAP_WARN" ]; then
   warn "Swap ${SWAP_PCT}% used — memory pressure building"
   fix "1. Check what is in swap:   smem -s swap   (apt install smem)
@@ -373,8 +373,8 @@ iostat -x 1 3 2>/dev/null | tail -n +4 | while read line; do
       crit "Disk util ${UTIL}% — disk saturated!"
       fix "1. Find disk hog process:  iotop -o   (apt install iotop)
 2. Check write latency:     iostat -x 1 5 | grep -v loop
-3. Check log file growth:   du -h /opt/trading/logs | sort -rh | head -5
-4. Clean old logs:          find /opt/trading/logs -name '*.log' -mtime +7 -delete
+3. Check log file growth:   du -h /opt/server-health/logs | sort -rh | head -5
+4. Clean old logs:          find /opt/server-health/logs -name '*.log' -mtime +7 -delete
 5. Check disk health:       smartctl -a /dev/sda
 6. Consider faster disk:    escalate to senior engineer if hardware issue"
     elif (( $(echo "$UTIL >= $UTIL_WARN" | bc -l 2>/dev/null) )); then
@@ -425,7 +425,7 @@ if [ "$FAILED_COUNT" -gt 0 ]; then
 4. Attempt restart:         systemctl restart <service>
 5. Check start deps:        systemctl list-dependencies <service>
 6. Reset failed state:      systemctl reset-failed <service>
-7. If trading service down: escalate immediately to senior engineer"
+7. If service down: escalate immediately to senior engineer"
 else
   ok "No failed services found"
 fi
@@ -448,7 +448,7 @@ if [ "$FATAL_COUNT" -gt 0 ]; then
   done
   fix "1. Read full context:       journalctl -u <service> --since '10 minutes ago'
 2. Check which service:     journalctl -p crit --since '10 minutes ago'
-3. Check trading logs:      tail -50 /opt/trading/logs/*.log | grep -i fatal
+3. Check logs:      tail -50 /opt/server-health/logs/*.log | grep -i fatal
 4. Restart affected svc:    systemctl restart <service>
 5. If recurring FATAL:      escalate — do not just restart in a loop"
 else
@@ -466,9 +466,9 @@ if [ "$ERROR_COUNT" -ge 50 ]; then
   crit "$ERROR_COUNT errors in last 10 min — system is struggling!"
   fix "1. See all errors:          journalctl -p err --since '10 minutes ago'
 2. Find which service:      journalctl -p err --since '10 minutes ago' | awk '{print \$5}' | sort | uniq -c | sort -rn
-3. Check trading logs:      grep -i error /opt/trading/logs/*.log | tail -20
+3. Check  logs:      grep -i error /opt/server-health/logs/*.log | tail -20
 4. Watch live errors:       journalctl -f -p err
-5. Escalate if trading svc: do not wait — contact senior engineer"
+5. Escalate if svc: do not wait — contact senior engineer"
 elif [ "$ERROR_COUNT" -ge 10 ]; then
   warn "$ERROR_COUNT errors in last 10 min — needs attention"
   fix "1. Review errors:           journalctl -p err --since '10 minutes ago' | tail -20
@@ -550,12 +550,12 @@ if [ "$TIME_WAIT" -gt 100 ]; then
   fix "1. See what connections:    ss -an | grep TIME-WAIT | head -20
 2. Reduce TIME_WAIT timeout: echo 30 > /proc/sys/net/ipv4/tcp_fin_timeout
 3. Enable port reuse:        echo 1 > /proc/sys/net/ipv4/tcp_tw_reuse
-4. Check trading reconnects: grep -i 'connect\|reconnect' /opt/trading/logs/*.log | tail -20"
+4. Check service reconnects: grep -i 'connect\|reconnect' /opt/server-health/logs/*.log | tail -20"
 fi
 if [ "$CLOSE_WAIT" -gt 50 ]; then
   crit "High CLOSE_WAIT ($CLOSE_WAIT) — app not closing connections!"
   fix "1. Find which app:          ss -anp | grep CLOSE-WAIT | head -20
-2. Check trading app code:  connections must be explicitly closed after use
+2. Check app code:  connections must be explicitly closed after use
 3. Restart offending svc:   systemctl restart <service>
 4. Watch if grows:          watch -n 2 'ss -an | grep -c CLOSE-WAIT'
    NOTE: CLOSE_WAIT means the remote side closed the connection but your app has not — this is a code/config bug."
@@ -575,7 +575,7 @@ if [ -n "$GW" ]; then
 4. Check cable/switch:      ethtool eth0 | grep -i link
 5. Check exchange reach:    ping -c 5 <exchange-ip>
 6. Contact network team:    provide traceroute output
-7. Escalate immediately:    network loss = trading halt"
+7. Escalate immediately:    network loss = halt"
   elif [ "${PACKET_LOSS:-0}" -ge 10 ]; then
     warn "Packet loss ${PACKET_LOSS}% to gateway $GW"
     fix "1. Confirm with longer ping: ping -c 20 $GW
