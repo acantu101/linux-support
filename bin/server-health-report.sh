@@ -20,26 +20,27 @@ REPORT="$REPORT_DIR/health_report_$(date +%Y%m%d_%H%M%S).txt"
 exec > >(tee -a "$REPORT") 2>&1
 
 # ---------- HELPERS ----------
-section()  { echo -e "\n${CYN}${BLD}════════════════════════════════════════════════════${RST}"; \
-             echo -e "${CYN}${BLD}  $1${RST}"; \
+section()  { echo -e "\n${CYN}${BLD}════════════════════════════════════════════════════${RST}"
+             echo -e "${CYN}${BLD}  $1${RST}"
              echo -e "${CYN}${BLD}════════════════════════════════════════════════════${RST}"; }
 ok()       { echo -e "  ${GRN}[  OK  ]${RST}  $1"; }
 warn()     { echo -e "  ${YEL}[ WARN ]${RST}  $1"; }
 crit()     { echo -e "  ${RED}[ CRIT ]${RST}  $1"; }
 info()     { echo -e "  ${BLD}[ INFO ]${RST}  $1"; }
 divider()  { echo -e "  --------------------------------------------------------"; }
+autocheck(){ echo -e "  ${CYN}  ▶ AUTO: $1${RST}"; }
 fix() {
-  echo -e "  ${YEL}${BLD}  ▶ RECOMMENDED STEPS:${RST}"
+  echo -e "  ${YEL}${BLD}  ▶ ACTION REQUIRED:${RST}"
   while IFS= read -r step; do
     echo -e "  ${YEL}    $step${RST}"
   done <<< "$1"
   echo ""
 }
 
-# BUG FIX: safe integer conversion — strips decimals, handles empty/multiline values
+# Safe integer conversion
 to_int() {
   local val
-  val=$(echo "${1}" | head -1 | tr -d '\n' | grep -oE '^[0-9]+' )
+  val=$(echo "${1}" | head -1 | tr -d '\n' | grep -oE '^[0-9]+')
   echo "${val:-0}"
 }
 
@@ -52,7 +53,7 @@ IOWAIT_WARN=10;     IOWAIT_CRIT=25
 UTIL_WARN=70;       UTIL_CRIT=85
 INODE_WARN=80;      INODE_CRIT=90
 OFD_WARN=10000;     OFD_CRIT=50000
-LOAD_WARN=0.8;      LOAD_CRIT=1.2   # multiplier of core count
+LOAD_WARN=0.8;      LOAD_CRIT=1.2
 
 # ============================================================
 echo ""
@@ -68,74 +69,80 @@ section "1. CPU ANALYSIS"
 # ============================================================
 
 CPU_CORES=$(nproc)
-
-# BUG FIX: capture top output once to avoid multiple slow calls
 TOP_OUTPUT=$(top -b -n 2 -d 0.5 2>/dev/null | grep "Cpu(s)" | tail -1)
 CPU_IDLE=$(echo "$TOP_OUTPUT"   | awk '{for(i=1;i<=NF;i++) if($i~/id,/) print $(i-1)}' | tr -d '%')
 CPU_IOWAIT=$(echo "$TOP_OUTPUT" | awk '{for(i=1;i<=NF;i++) if($i~/wa,/) print $(i-1)}' | tr -d '%')
 CPU_USER=$(echo "$TOP_OUTPUT"   | awk '{for(i=1;i<=NF;i++) if($i~/us,/) print $(i-1)}' | tr -d '%')
 CPU_SYS=$(echo "$TOP_OUTPUT"    | awk '{for(i=1;i<=NF;i++) if($i~/sy,/) print $(i-1)}' | tr -d '%')
 CPU_STEAL=$(echo "$TOP_OUTPUT"  | awk '{for(i=1;i<=NF;i++) if($i~/st/) print $(i-1)}' | tr -d '%')
-
-CPU_IDLE=${CPU_IDLE:-0}
-CPU_IOWAIT=${CPU_IOWAIT:-0}
-CPU_STEAL=${CPU_STEAL:-0}
+CPU_IDLE=${CPU_IDLE:-0}; CPU_IOWAIT=${CPU_IOWAIT:-0}; CPU_STEAL=${CPU_STEAL:-0}
 CPU_USED=$(echo "100 - ${CPU_IDLE}" | bc 2>/dev/null || echo "0")
 CPU_USED=${CPU_USED:-0}
+CPU_INT=$(to_int "$CPU_USED"); IOWAIT_INT=$(to_int "$CPU_IOWAIT"); STEAL_INT=$(to_int "$CPU_STEAL")
 
 info "CPU Cores       : $CPU_CORES"
 info "CPU Used        : ${CPU_USED}%  (user=${CPU_USER:-0}% sys=${CPU_SYS:-0}% iowait=${CPU_IOWAIT}% steal=${CPU_STEAL}%)"
 divider
 
-CPU_INT=$(to_int "$CPU_USED")
-IOWAIT_INT=$(to_int "$CPU_IOWAIT")
-STEAL_INT=$(to_int "$CPU_STEAL")
-
 if [ "$CPU_INT" -ge "$CPU_CRIT" ]; then
   crit "CPU usage ${CPU_USED}% — server is overwhelmed!"
-  fix "1. Find the hog:            ps aux --sort=-%cpu | head -10
-2. Watch it live:            top -b -n 1 | head -20
-3. Trace what it is doing:   strace -p <PID>
-4. Graceful restart:         systemctl restart <service>
-5. Force kill (last resort): kill -9 <PID>"
+  autocheck "Top 10 CPU-consuming processes right now:"
+  ps aux --sort=-%cpu | awk 'NR==1{print "    "$0} NR>1 && NR<=11{printf "    %-10s %-8s %-6s %-6s %s\n",$1,$2,$3,$4,$11}'
+  autocheck "Scheduled jobs that may have triggered this:"
+  crontab -l 2>/dev/null | grep -v "^#" | head -10 | while IFS= read -r l; do echo "    $l"; done
+  ls /etc/cron.d/ 2>/dev/null | while IFS= read -r l; do echo "    /etc/cron.d/$l"; done
+  fix "1. Identify the hog above and determine if it is legitimate
+2. Graceful restart:         systemctl restart <service>
+3. Force kill (last resort): kill -9 <PID>
+4. Set CPU limit in unit:    CPUQuota=80%  then  systemctl daemon-reload"
 elif [ "$CPU_INT" -ge "$CPU_WARN" ]; then
   warn "CPU usage ${CPU_USED}% — getting busy"
-  fix "1. Monitor trend:           top -b -n 5 -d 2
-2. Identify top process:    ps aux --sort=-%cpu | head -5
-3. Check if scheduled job:  crontab -l && cat /etc/cron.d/*"
+  autocheck "Top 5 CPU consumers:"
+  ps aux --sort=-%cpu | awk 'NR>1 && NR<=6{printf "    %-10s %-8s %-6s %s\n",$1,$2,$3,$11}'
+  fix "1. Monitor if it keeps climbing: watch -n 5 'ps aux --sort=-%cpu | head -5'
+2. Restart offending service if confirmed: systemctl restart <service>"
 else
   ok "CPU usage ${CPU_USED}% is healthy"
 fi
 
 if [ "$IOWAIT_INT" -ge "$IOWAIT_CRIT" ]; then
   crit "%iowait ${CPU_IOWAIT}% — severe disk bottleneck!"
-  fix "1. Confirm which disk:       iostat -x 1 5
-2. Find disk hog process:    iotop -o   (apt install iotop)
-3. Check disk utilisation:   iostat -x 1 | grep -v loop
-4. Check if logs filling:    du -h /opt/server-health/logs | sort -rh | head -10
-5. Check disk health:        smartctl -a /dev/sda
-6. Free up space:            find /opt/server-health/logs -name '*.log' -mtime +7 -delete
-7. Clear journal logs:       journalctl --vacuum-time=3d"
+  autocheck "Disk utilisation right now:"
+  iostat -x 1 2 2>/dev/null | awk '/^(sd|vd|nvme)/{printf "    Device: %-10s  %%util: %s  r_await: %s  w_await: %s\n",$1,$NF,$9,$10}'
+  autocheck "Log directory sizes:"
+  du -h /opt/server-health/logs 2>/dev/null | sort -rh | head -5 | while IFS= read -r l; do echo "    $l"; done
+  autocheck "Disk health (SMART):"
+  for disk in /dev/sd? /dev/vd? /dev/nvme?; do
+    [ -b "$disk" ] && smartctl -H "$disk" 2>/dev/null | grep -E "overall|result" | while IFS= read -r l; do echo "    $disk: $l"; done
+  done
+  fix "1. Find the I/O hog:          iotop -o   (apt install iotop)
+2. Clean old logs:           find /opt/server-health/logs -name '*.log' -mtime +7 -delete
+3. Clear journal:            journalctl --vacuum-time=3d
+4. Escalate if SMART shows errors — hardware may be failing"
 elif [ "$IOWAIT_INT" -ge "$IOWAIT_WARN" ]; then
   warn "%iowait ${CPU_IOWAIT}% — disk may be slow"
-  fix "1. Watch disk I/O:           iostat -x 1 5
-2. Find writing processes:   iotop -o
-3. Check log growth:         ls -lth /opt/server-health/logs/ | head -10"
+  autocheck "Current disk I/O snapshot:"
+  iostat -x 1 2 2>/dev/null | awk '/^(sd|vd|nvme)/{printf "    Device: %-10s  %%util: %s\n",$1,$NF}'
+  autocheck "Log directory growth:"
+  ls -lth /opt/server-health/logs/ 2>/dev/null | head -5 | while IFS= read -r l; do echo "    $l"; done
+  fix "1. Run iotop to find the writing process: iotop -o
+2. Clean old logs if growing:  find /opt/server-health/logs -name '*.log' -mtime +7 -delete"
 else
   ok "%iowait ${CPU_IOWAIT}% — no disk bottleneck"
 fi
 
 if [ "$STEAL_INT" -ge 10 ]; then
   crit "%steal ${CPU_STEAL}% — VM host is starving this server!"
-  fix "1. Confirm steal over time:  vmstat 1 10 | awk '{print \$17}'
-2. Check cloud console:      look for host CPU saturation metrics
-3. Consider dedicated host:  contact cloud provider support
-4. Reduce VM load short term: systemctl stop <non-critical-service>"
+  autocheck "Steal trend over 10 seconds:"
+  vmstat 1 10 2>/dev/null | awk 'NR>2{print "    steal: "$17"%"}'
+  fix "1. Contact cloud provider with vmstat output — request host migration
+2. Short-term: systemctl stop <non-critical-service> to reduce load
+3. Long-term: move to dedicated instance"
 elif [ "$STEAL_INT" -ge 5 ]; then
   warn "%steal ${CPU_STEAL}% — VM host stealing some CPU"
-  fix "1. Monitor trend:            sar -u 1 10   (apt install sysstat)
-2. Check cloud host metrics: via cloud provider console
-3. Open support ticket if sustained above 5%"
+  autocheck "Steal trend over 5 seconds:"
+  vmstat 1 5 2>/dev/null | awk 'NR>2{print "    steal: "$17"%"}'
+  fix "1. Open support ticket with cloud provider if sustained above 5%"
 else
   ok "%steal ${CPU_STEAL}% — no hypervisor interference"
 fi
@@ -164,17 +171,21 @@ check_load() {
   local val=$1 label=$2
   if (( $(echo "$val > $LOAD_CRIT_VAL" | bc -l) )); then
     crit "Load $label = $val > $LOAD_CRIT_VAL — system overloaded!"
-    fix "1. Check run queue:         vmstat 1 5  (column 'r' = waiting processes)
-2. Find blocked processes:  ps aux | awk '\$8==\"D\"'
-3. Check if iowait is high: top -b -n1 | grep Cpu  (wa column)
-4. Find top CPU hogs:       ps aux --sort=-%cpu | head -10
-5. Check for runaway loop:  strace -p <PID>
-6. Restart offending svc:   systemctl restart <service>"
+    autocheck "Run queue and blocked processes right now:"
+    vmstat 1 3 2>/dev/null | awk 'NR>1{printf "    r=%-3s b=%-3s swpd=%-8s si=%-4s so=%-4s wa=%s\n",$1,$2,$3,$7,$8,$17}'
+    autocheck "Blocked processes (state=D, waiting on I/O):"
+    ps aux | awk '$8=="D" {printf "    PID:%-8s USER:%-10s CMD:%s\n",$2,$1,$11}' | head -10
+    autocheck "Top CPU hogs:"
+    ps aux --sort=-%cpu | awk 'NR>1 && NR<=6{printf "    %-10s %-8s %-6s %s\n",$1,$2,$3,$11}'
+    fix "1. If blocked processes found above: check iowait in section 1 — disk may be the root cause
+2. Restart the offending service: systemctl restart <service>
+3. Kill runaway process:          kill -15 <PID>"
   elif (( $(echo "$val > $LOAD_WARN_VAL" | bc -l) )); then
     warn "Load $label = $val — approaching limit"
-    fix "1. Watch trend:              uptime  (run again in 1 min)
-2. Check what is running:   ps aux --sort=-%cpu | head -10
-3. Check iowait:            iostat -x 1 3"
+    autocheck "Current run queue:"
+    vmstat 1 3 2>/dev/null | awk 'NR>1{printf "    r=%-3s b=%-3s wa=%s\n",$1,$2,$17}'
+    fix "1. Watch the trend:  run this report again in 2 minutes
+2. If load keeps climbing: restart non-critical services"
   else
     ok "Load $label = $val — healthy"
   fi
@@ -196,6 +207,7 @@ SWAP_TOTAL=$(free -m | awk '/^Swap/ {print $2}')
 SWAP_USED=$(free -m  | awk '/^Swap/ {print $3}')
 SWAP_PCT=0
 [ "$SWAP_TOTAL" -gt 0 ] && SWAP_PCT=$(awk "BEGIN {printf \"%.1f\", $SWAP_USED/$SWAP_TOTAL*100}")
+MEM_INT=$(to_int "$MEM_PCT"); SWAP_INT=$(to_int "$SWAP_PCT")
 
 info "Memory Total    : ${MEM_TOTAL} MB"
 info "Memory Used     : ${MEM_USED} MB  (${MEM_PCT}%)"
@@ -205,46 +217,56 @@ info "Swap Total      : ${SWAP_TOTAL} MB"
 info "Swap Used       : ${SWAP_USED} MB  (${SWAP_PCT}%)"
 divider
 
-MEM_INT=$(to_int "$MEM_PCT")
-SWAP_INT=$(to_int "$SWAP_PCT")
-
 if [ "$MEM_INT" -ge "$MEM_CRIT" ]; then
   crit "Memory ${MEM_PCT}% used — OOM risk!"
-  fix "1. Find memory hogs:         ps aux --sort=-%mem | head -10
-2. Check OOM score:          cat /proc/<PID>/oom_score
-3. Check per-process mem:    cat /proc/<PID>/status | grep -E 'VmRSS|VmSwap|VmPeak'
-4. Restart leaking service:  systemctl restart <service>
-5. Drop page cache safely:   echo 1 > /proc/sys/vm/drop_caches
-6. Run swap setup script:    bash add_swap.sh"
+  autocheck "Top 10 memory hogs right now:"
+  ps aux --sort=-%mem | awk 'NR==1{print "    "$0} NR>1 && NR<=11{printf "    %-10s %-8s %-6s %-6s %s\n",$1,$2,$3,$4,$11}'
+  autocheck "OOM scores for top 5 consumers (higher = killed first):"
+  ps aux --sort=-%mem | awk 'NR>1 && NR<=6{print $2}' | while IFS= read -r pid; do
+    score=$(cat /proc/"$pid"/oom_score 2>/dev/null)
+    cmd=$(ps -p "$pid" -o comm= 2>/dev/null)
+    [ -n "$score" ] && echo "    PID $pid ($cmd) OOM score: $score"
+  done
+  autocheck "Dropping page cache safely (frees buff/cache, not app memory):"
+  sync && echo 1 > /proc/sys/vm/drop_caches && echo "    Page cache dropped" || echo "    Could not drop cache"
+  free -m | awk '/^Mem/{printf "    Memory after cache drop: used=%dMB free=%dMB\n",$3,$4}'
+  fix "1. Restart the leaking service (identify from hogs above): systemctl restart <service>
+2. If OOM is imminent:  bash add_swap.sh
+3. Set memory cap in unit file:  MemoryMax=4G  then  systemctl daemon-reload"
 elif [ "$MEM_INT" -ge "$MEM_WARN" ]; then
   warn "Memory ${MEM_PCT}% used — getting tight"
-  fix "1. Watch memory trend:       watch -n 2 free -h
-2. Find top consumers:      ps aux --sort=-%mem | head -5
-3. Check for memory leaks:  cat /proc/<PID>/status | grep VmRSS"
+  autocheck "Top 5 memory consumers:"
+  ps aux --sort=-%mem | awk 'NR>1 && NR<=6{printf "    %-10s %-8s %-6s %s\n",$1,$2,$4,$11}'
+  autocheck "VmRSS (actual RAM) for top consumer:"
+  TOP_PID=$(ps aux --sort=-%mem | awk 'NR==2{print $2}')
+  cat /proc/"$TOP_PID"/status 2>/dev/null | grep -E "VmRSS|VmSwap|VmPeak" | while IFS= read -r l; do echo "    $l"; done
+  fix "1. If a service is growing over time (memory leak): systemctl restart <service>
+2. Schedule restart during off-hours if leak is known but non-critical"
 else
   ok "Memory ${MEM_PCT}% used — healthy"
 fi
 
 if [ "$SWAP_INT" -ge "$SWAP_CRIT" ]; then
   crit "Swap ${SWAP_PCT}% used — system is swapping heavily, major slowdown!"
-  fix "1. Confirm swapping:         vmstat 1 5  (si/so columns should be 0)
-2. Find memory hog:          ps aux --sort=-%mem | head -10
-3. Restart leaking service:  systemctl restart <service>
-4. Reduce swappiness:        echo 10 > /proc/sys/vm/swappiness
-5. Kill non-critical proc:   kill -15 <PID>
-6. Contact senior engineer immediately"
+  autocheck "Swap activity right now (si=swap-in so=swap-out, both should be 0):"
+  vmstat 1 5 2>/dev/null | awk 'NR>1{printf "    si=%-6s so=%s\n",$7,$8}'
+  autocheck "What is using swap (top consumers):"
+  ps aux --sort=-%mem | awk 'NR>1 && NR<=6{printf "    %-10s %-8s %-6s %s\n",$1,$2,$4,$11}'
+  fix "1. Restart the largest memory consumer (identified above): systemctl restart <service>
+2. Kill non-critical process: kill -15 <PID>
+3. Tune swappiness:           echo 10 > /proc/sys/vm/swappiness
+4. Contact senior engineer if service cannot be restarted"
 elif [ "$SWAP_INT" -ge "$SWAP_WARN" ]; then
   warn "Swap ${SWAP_PCT}% used — memory pressure building"
-  fix "1. Check what is in swap:    smem -s swap   (apt install smem)
-2. Find memory hogs:         ps aux --sort=-%mem | head -5
-3. Monitor swap activity:    vmstat 1 5  (watch si/so columns)"
+  autocheck "Swap activity (should be 0 for si and so):"
+  vmstat 1 3 2>/dev/null | awk 'NR>1{printf "    si=%-6s so=%s\n",$7,$8}'
+  fix "1. Restart the largest memory consumer if confirmed leaking: systemctl restart <service>
+2. Run swap setup if more headroom needed: bash add_swap.sh"
 elif [ "$SWAP_TOTAL" -eq 0 ]; then
   warn "No swap configured — OOM killer will fire with no safety net"
-  fix "1. Run the swap setup script: bash add_swap.sh
-2. Or add manually:
-   fallocate -l 2G /swapfile && chmod 600 /swapfile
-   mkswap /swapfile && swapon /swapfile
-   echo '/swapfile none swap sw 0 0' >> /etc/fstab"
+  autocheck "Current memory headroom:"
+  free -h | while IFS= read -r l; do echo "    $l"; done
+  fix "1. Run swap setup script now:  bash add_swap.sh"
 else
   ok "Swap ${SWAP_PCT}% used — healthy"
 fi
@@ -264,16 +286,25 @@ info "OOM events in dmesg : $OOM_COUNT"
 divider
 
 if [ "$OOM_COUNT" -gt 0 ]; then
-  crit "OOM killer has fired $OOM_COUNT time(s)! Details:"
-  dmesg | grep -i "oom\|out of memory\|killed process" | tail -10 | while IFS= read -r line; do
-    echo "    $line"
+  crit "OOM killer has fired $OOM_COUNT time(s)!"
+  autocheck "What was killed and when:"
+  dmesg | grep -i "oom\|out of memory\|killed process" | tail -10 | while IFS= read -r l; do echo "    $l"; done
+  autocheck "Current OOM scores (top 5 — higher = killed first next time):"
+  ps aux --sort=-%mem | awk 'NR>1 && NR<=6{print $2}' | while IFS= read -r pid; do
+    score=$(cat /proc/"$pid"/oom_score 2>/dev/null)
+    cmd=$(ps -p "$pid" -o comm= 2>/dev/null)
+    [ -n "$score" ] && echo "    PID $pid ($cmd) OOM score: $score"
   done
-  fix "1. See what was killed:      dmesg | grep -i 'killed process'
-2. Check memory hogs now:    ps aux --sort=-%mem | head -10
-3. Check OOM scores:         cat /proc/<PID>/oom_score
-4. Protect critical service: echo -1000 > /proc/<PID>/oom_score_adj
-5. Run swap setup script:    bash add_swap.sh
-6. Restart killed service:   systemctl restart <service>"
+  autocheck "Protecting all non-root critical services from OOM kill:"
+  ps aux --sort=-%mem | awk 'NR>1 && NR<=4{print $2}' | while IFS= read -r pid; do
+    cmd=$(ps -p "$pid" -o comm= 2>/dev/null)
+    echo "-500" > /proc/"$pid"/oom_score_adj 2>/dev/null && \
+      echo "    Protected PID $pid ($cmd) — oom_score_adj set to -500" || \
+      echo "    Could not adjust PID $pid"
+  done
+  fix "1. Restart the killed service: systemctl restart <service>
+2. Add swap to prevent future OOM: bash add_swap.sh
+3. Set MemoryMax in unit file to cap usage:  MemoryMax=4G"
 else
   ok "No OOM events detected in dmesg"
 fi
@@ -282,9 +313,11 @@ JOUR_OOM=$(journalctl -k --since "24 hours ago" 2>/dev/null | grep -ic "oom\|kil
 JOUR_OOM=$(to_int "${JOUR_OOM:-0}")
 if [ "$JOUR_OOM" -gt 0 ]; then
   crit "OOM events in journal (last 24h): $JOUR_OOM"
-  fix "1. See full OOM history:     journalctl -k --since '24 hours ago' | grep -i oom
-2. Identify pattern:         check if OOM repeats at same time (cron job?)
-3. Review memory limits:     systemctl show <service> | grep -i memory"
+  autocheck "OOM pattern — checking if it repeats at the same time:"
+  journalctl -k --since "24 hours ago" 2>/dev/null | grep -i "killed process" | \
+    awk '{print $1, $2, $3}' | while IFS= read -r l; do echo "    $l"; done
+  fix "1. If pattern repeats at same time — check crontab for a heavy job
+2. Review memory limits: systemctl show <service> | grep -i memory"
 else
   ok "No OOM events in journal (last 24h)"
 fi
@@ -302,17 +335,22 @@ df -h | tail -n +2 | while IFS= read -r line; do
   if [ "$PCT" != "-" ] && [ -n "$PCT" ] && echo "$PCT" | grep -qE '^[0-9]+$'; then
     if [ "$PCT" -ge "$DISK_CRIT" ]; then
       echo -e "  ${RED}[CRIT $PCT%]${RST} $line"
-      echo -e "  ${YEL}    1. Find largest dirs:   du -h $MNT | sort -rh | head -10${RST}"
-      echo -e "  ${YEL}    2. Find largest files:  find $MNT -type f -size +100M${RST}"
-      echo -e "  ${YEL}    3. Clean old logs:      find $MNT -name '*.log' -mtime +7 -delete${RST}"
-      echo -e "  ${YEL}    4. Clear journal:       journalctl --vacuum-size=500M${RST}"
-      echo -e "  ${YEL}    5. Clear apt cache:     apt clean${RST}"
-      echo -e "  ${YEL}    6. Check open deleted:  lsof | grep deleted | head -20${RST}"
-      echo ""
+      autocheck "Top directories on $MNT:"
+      du -h "$MNT" 2>/dev/null | sort -rh | head -8 | while IFS= read -r l; do echo "    $l"; done
+      autocheck "Files over 100MB on $MNT:"
+      find "$MNT" -type f -size +100M -not -path "/proc/*" -printf '%s %p\n' 2>/dev/null | \
+        sort -rn | head -5 | awk '{printf "    %-12s %s\n",$1,$2}'
+      autocheck "Deleted files still held open (space not released until process closed):"
+      lsof 2>/dev/null | grep -i "deleted\|DEL" | awk '{printf "    %-15s PID:%-8s %s\n",$1,$2,$NF}' | head -5
+      fix "1. Clean old logs:     find $MNT -name '*.log' -mtime +7 -delete
+2. Clear journal:      journalctl --vacuum-size=500M
+3. Clear APT cache:    apt clean
+4. Restart any process holding deleted files open (shown above)"
     elif [ "$PCT" -ge "$DISK_WARN" ]; then
       echo -e "  ${YEL}[WARN $PCT%]${RST} $line"
-      echo -e "  ${YEL}    ▶ Review: du -h $MNT | sort -rh | head -10${RST}"
-      echo ""
+      autocheck "Top 5 directories on $MNT:"
+      du -h "$MNT" 2>/dev/null | sort -rh | head -5 | while IFS= read -r l; do echo "    $l"; done
+      fix "1. Review largest directories above and clean old logs/archives"
     else
       echo -e "  ${GRN}[  OK $PCT%]${RST} $line"
     fi
@@ -322,19 +360,17 @@ done
 echo ""
 info "Top 10 largest directories in /var:"
 divider
-du -h /var 2>/dev/null | sort -rh | head -10 | while IFS= read -r line; do echo "  $line"; done
+du -h /var 2>/dev/null | sort -rh | head -10 | while IFS= read -r l; do echo "  $l"; done
 
 echo ""
 info "Top 10 largest files in /var:"
 divider
-find /var -type f -printf '%s %p\n' 2>/dev/null | sort -rn | head -10 | \
-  awk '{printf "  %-12s %s\n", $1, $2}'
+find /var -type f -printf '%s %p\n' 2>/dev/null | sort -rn | head -10 | awk '{printf "  %-12s %s\n",$1,$2}'
 
 echo ""
-info "Files larger than 100MB on system:"
+info "Files larger than 100MB on system (excluding /proc):"
 divider
-find / -type f -size +100M -not -path "/proc/*" -printf '%s %p\n' 2>/dev/null | sort -rn | head -10 | \
-  awk '{printf "  %-12s %s\n", $1, $2}'
+find / -type f -size +100M -not -path "/proc/*" -printf '%s %p\n' 2>/dev/null | sort -rn | head -10 | awk '{printf "  %-12s %s\n",$1,$2}'
 
 # ============================================================
 section "6. INODE HEALTH"
@@ -349,16 +385,24 @@ df -i | tail -n +2 | while IFS= read -r line; do
   if [ "$PCT" != "-" ] && [ -n "$PCT" ] && echo "$PCT" | grep -qE '^[0-9]+$'; then
     if [ "$PCT" -ge "$INODE_CRIT" ]; then
       echo -e "  ${RED}[CRIT $PCT%]${RST} $line"
-      echo -e "  ${RED}  ▶ INODE EXHAUSTION on $MNT${RST}"
-      echo -e "  ${YEL}    1. Find inode hog dirs:  for d in $MNT/*/; do echo \$(find \$d | wc -l) \$d; done | sort -rn | head -10${RST}"
-      echo -e "  ${YEL}    2. Delete old log files: find $MNT -name '*.log' -mtime +7 -delete${RST}"
-      echo -e "  ${YEL}    3. Delete old tmp files: find /tmp -mtime +3 -delete${RST}"
-      echo -e "  ${YEL}    4. Check for mail spool: ls -la /var/spool/mail/${RST}"
-      echo ""
+      autocheck "Directories with most files on $MNT:"
+      for d in "$MNT"/*/; do
+        count=$(find "$d" 2>/dev/null | wc -l)
+        echo "    $count  $d"
+      done 2>/dev/null | sort -rn | head -8
+      autocheck "Mail spool check:"
+      ls -la /var/spool/mail/ 2>/dev/null | while IFS= read -r l; do echo "    $l"; done
+      fix "1. Delete old log files:  find $MNT -name '*.log' -mtime +3 -delete
+2. Clean temp files:       find /tmp -mtime +3 -delete && find /var/tmp -mtime +7 -delete
+3. Clean mail spool:       cat /dev/null > /var/spool/mail/root"
     elif [ "$PCT" -ge "$INODE_WARN" ]; then
       echo -e "  ${YEL}[WARN $PCT%]${RST} $line"
-      echo -e "  ${YEL}    ▶ Start cleaning: find $MNT -name '*.log' -mtime +7 -delete${RST}"
-      echo ""
+      autocheck "Top inode-consuming directories on $MNT:"
+      for d in "$MNT"/*/; do
+        count=$(find "$d" 2>/dev/null | wc -l)
+        echo "    $count  $d"
+      done 2>/dev/null | sort -rn | head -5
+      fix "1. Start cleaning small files: find $MNT -name '*.log' -mtime +7 -delete"
     else
       echo -e "  ${GRN}[  OK $PCT%]${RST} $line"
     fi
@@ -371,16 +415,12 @@ section "7. DISK I/O PERFORMANCE"
 
 info "Running iostat (3 samples, 1 second apart)..."
 divider
-
-# BUG FIX: collect full iostat output first, display it, then parse device lines only
 IOSTAT_OUT=$(iostat -x 1 3 2>/dev/null)
 echo "$IOSTAT_OUT" | while IFS= read -r line; do echo "  $line"; done
 
 echo ""
 info "Disk utilisation per device:"
 divider
-
-# BUG FIX: match only real disk device lines (sda, vda, nvme, etc), extract %util (last column)
 echo "$IOSTAT_OUT" | awk '/^(sd[a-z]|vd[a-z]|nvme|xvd[a-z]|hd[a-z])/{print $1, $NF}' | \
 while IFS= read -r devline; do
   DEV=$(echo "$devline" | awk '{print $1}')
@@ -388,16 +428,25 @@ while IFS= read -r devline; do
   UTIL_INT=$(to_int "$UTIL")
   if [ "$UTIL_INT" -ge "$UTIL_CRIT" ]; then
     crit "Device $DEV — disk util ${UTIL}% — disk saturated!"
-    fix "1. Find disk hog:            iotop -o   (apt install iotop)
-2. Check write latency:      iostat -x 1 5 | grep $DEV
-3. Check log file growth:    du -h /opt/server-health/logs | sort -rh | head -5
-4. Clean old logs:           find /opt/server-health/logs -name '*.log' -mtime +7 -delete
-5. Check disk health:        smartctl -a /dev/$DEV
-6. Escalate to senior engineer if hardware issue"
+    autocheck "Detailed I/O stats for /dev/$DEV:"
+    iostat -x 1 2 2>/dev/null | grep "^$DEV" | tail -1 | \
+      awk '{printf "    r/s=%-8s w/s=%-8s r_await=%-8s w_await=%-8s %%util=%s\n",$2,$8,$9,$10,$NF}'
+    autocheck "SMART health for /dev/$DEV:"
+    smartctl -H "/dev/$DEV" 2>/dev/null | grep -E "overall|result|PASSED|FAILED" | \
+      while IFS= read -r l; do echo "    $l"; done
+    autocheck "Log directory size:"
+    du -sh /opt/server-health/logs 2>/dev/null | while IFS= read -r l; do echo "    $l"; done
+    fix "1. Find the I/O hog:          iotop -o   (apt install iotop)
+2. Clean old logs:           find /opt/server-health/logs -name '*.log' -mtime +7 -delete
+3. Clear journal:            journalctl --vacuum-time=3d
+4. If SMART shows FAILED — disk is dying: escalate immediately"
   elif [ "$UTIL_INT" -ge "$UTIL_WARN" ]; then
     warn "Device $DEV — disk util ${UTIL}% — getting busy"
-    fix "1. Watch I/O live:           iostat -x 1 5
-2. Find writing process:     iotop -o"
+    autocheck "I/O stats for /dev/$DEV:"
+    iostat -x 1 2 2>/dev/null | grep "^$DEV" | tail -1 | \
+      awk '{printf "    r/s=%-8s w/s=%-8s %%util=%s\n",$2,$8,$NF}'
+    fix "1. Run iotop to find writing process: iotop -o
+2. Clean old logs if growing:          find /opt/server-health/logs -name '*.log' -mtime +7 -delete"
   else
     ok "Device $DEV — disk util ${UTIL}% — healthy"
   fi
@@ -414,12 +463,16 @@ divider
 
 if [ "$ZOMBIE_COUNT" -gt 0 ]; then
   warn "Found $ZOMBIE_COUNT zombie process(es) — parent may have crashed:"
-  ps aux | awk '$8=="Z" {print "  PID:"$2, "USER:"$1, "CMD:"$11}'
-  fix "1. Find zombie PID:          ps aux | awk '\$8==\"Z\"'
-2. Find its parent (PPID):   ps -o ppid= -p <ZOMBIE_PID>
-3. Restart the parent:       systemctl restart <parent-service>
-4. Graceful kill parent:     kill -15 <PARENT_PID>
-5. Force kill parent:        kill -9 <PARENT_PID>
+  autocheck "Zombie PIDs and their parent processes:"
+  ps aux | awk '$8=="Z" {print $2}' | while IFS= read -r zpid; do
+    ppid=$(ps -o ppid= -p "$zpid" 2>/dev/null | tr -d ' ')
+    pcmd=$(ps -p "$ppid" -o comm= 2>/dev/null)
+    zcmd=$(ps -p "$zpid" -o comm= 2>/dev/null)
+    echo "    Zombie PID: $zpid ($zcmd)  →  Parent PID: $ppid ($pcmd)"
+  done
+  fix "1. Restart the parent service shown above: systemctl restart <parent-service>
+2. If parent is stuck:                       kill -15 <PARENT_PID>
+3. Force kill only as last resort:           kill -9 <PARENT_PID>
    NOTE: Zombies cannot be killed directly — killing the parent cleans them up."
 else
   ok "No zombie processes found"
@@ -429,13 +482,10 @@ fi
 section "9. CRASHED / FATAL SERVICES"
 # ============================================================
 
-# ---------- helper: full automated crash investigation ----------
 investigate_crashed_service() {
   local SVC="$1"
-  local CRASH_DATE
-  CRASH_DATE=$(date +%Y%m%d_%H%M%S)
-  local CLEAN_SVC
-  CLEAN_SVC=$(echo "$SVC" | sed 's/\.service$//')
+  local CRASH_DATE; CRASH_DATE=$(date +%Y%m%d_%H%M%S)
+  local CLEAN_SVC; CLEAN_SVC=$(echo "$SVC" | sed 's/\.service$//')
   local CRASH_LOG="$REPORT_DIR/${CLEAN_SVC}_crash_${CRASH_DATE}.txt"
 
   echo -e "\n  ${RED}${BLD}══ CRASH INVESTIGATION: $SVC ══${RST}"
@@ -448,15 +498,11 @@ investigate_crashed_service() {
     echo "  Server    : $(hostname)"
     echo "======================================================"
     echo ""
-
-    # ── 1. Current status ──────────────────────────────────
     echo "------------------------------------------------------"
     echo "  1. SYSTEMCTL STATUS"
     echo "------------------------------------------------------"
     systemctl status "$SVC" 2>/dev/null
     echo ""
-
-    # ── 2. Restart policy ──────────────────────────────────
     echo "------------------------------------------------------"
     echo "  2. RESTART CONFIGURATION"
     echo "------------------------------------------------------"
@@ -469,15 +515,11 @@ investigate_crashed_service() {
     echo "  Start limit burst : ${START_LIMIT:-not set}"
     echo "  Start limit window: ${START_INTERVAL:-not set}"
     if [ "${RESTART_POLICY:-no}" = "no" ] || [ -z "$RESTART_POLICY" ]; then
-      echo "  ⚠️  WARNING: Service is NOT configured to restart on failure."
-      echo "  Add to unit file: Restart=on-failure"
-      echo "                    RestartSec=5"
+      echo "  ⚠️  NOT configured to restart on failure"
     else
-      echo "  ✅ Service will auto-restart on failure (Restart=$RESTART_POLICY)"
+      echo "  ✅ Auto-restart configured: Restart=$RESTART_POLICY"
     fi
     echo ""
-
-    # ── 3. Exit code / failure reason ─────────────────────
     echo "------------------------------------------------------"
     echo "  3. FAILURE DETAILS"
     echo "------------------------------------------------------"
@@ -488,94 +530,64 @@ investigate_crashed_service() {
     echo "  Result     : ${RESULT:-unknown}"
     echo "  Last PID   : ${MAIN_PID:-unknown}"
     echo ""
-
-    # ── 4. Last 50 log lines ───────────────────────────────
     echo "------------------------------------------------------"
-    echo "  4. LAST 50 LOG ENTRIES (journalctl -u $SVC -n 50)"
+    echo "  4. LAST 50 LOG ENTRIES"
     echo "------------------------------------------------------"
     journalctl -u "$SVC" -n 50 --no-pager 2>/dev/null
     echo ""
-
-    # ── 5. Dependencies ────────────────────────────────────
     echo "------------------------------------------------------"
-    echo "  5. SERVICE DEPENDENCIES"
+    echo "  5. DEPENDENCIES"
     echo "------------------------------------------------------"
     systemctl list-dependencies "$SVC" 2>/dev/null
     echo ""
-
-    # ── 6. Required-by (what depends on this service) ──────
     echo "------------------------------------------------------"
-    echo "  6. REQUIRED BY (services that depend on $SVC)"
+    echo "  6. REQUIRED BY (what depends on this service)"
     echo "------------------------------------------------------"
     systemctl list-dependencies "$SVC" --reverse 2>/dev/null | head -20
     echo ""
-
-    # ── 7. Unit file location ──────────────────────────────
     echo "------------------------------------------------------"
     echo "  7. UNIT FILE"
     echo "------------------------------------------------------"
     UNIT_FILE=$(systemctl show "$SVC" --property=FragmentPath 2>/dev/null | cut -d= -f2)
     echo "  Unit file : ${UNIT_FILE:-not found}"
-    if [ -f "$UNIT_FILE" ]; then
-      echo ""
-      cat "$UNIT_FILE"
-    fi
+    [ -f "$UNIT_FILE" ] && echo "" && cat "$UNIT_FILE"
     echo ""
-
     echo "======================================================"
     echo "  END OF CRASH REPORT — $SVC"
     echo "======================================================"
-
   } | tee "$CRASH_LOG" | while IFS= read -r line; do echo "    $line"; done
 
   echo ""
   echo -e "  ${BLD}  📄 Crash log saved: $CRASH_LOG${RST}"
-
-  # ── Live display (in report only, not repeated in log) ──
   echo ""
-  echo -e "  ${YEL}${BLD}  ▶ AUTOMATED CHECKS SUMMARY for $SVC:${RST}"
 
-  # Restart policy warning in report
+  # Summary in main report
   if [ "${RESTART_POLICY:-no}" = "no" ] || [ -z "$RESTART_POLICY" ]; then
-    echo -e "  ${RED}    ✗ Not configured to restart on failure${RST}"
-    echo -e "  ${YEL}      Fix: add to unit file:  Restart=on-failure${RST}"
-    echo -e "  ${YEL}                              RestartSec=5${RST}"
-    echo -e "  ${YEL}      Then run:               systemctl daemon-reload${RST}"
-    echo -e "  ${YEL}                              systemctl restart $SVC${RST}"
+    echo -e "  ${RED}  ✗ NOT configured to restart on failure${RST}"
   else
-    echo -e "  ${GRN}    ✓ Auto-restart configured: Restart=$RESTART_POLICY${RST}"
+    echo -e "  ${GRN}  ✓ Auto-restart configured: Restart=${RESTART_POLICY}${RST}"
   fi
-
-  # Result / exit code
-  echo -e "  ${YEL}    Failure result : ${RESULT:-unknown}${RST}"
-  echo -e "  ${YEL}    Exit code      : ${EXIT_CODE:-unknown}${RST}"
-
-  # reset-failed note
+  echo -e "  ${YEL}  Failure result : ${RESULT:-unknown}  |  Exit code: ${EXIT_CODE:-unknown}${RST}"
   echo ""
-  echo -e "  ${YEL}${BLD}  ▶ NEXT STEPS:${RST}"
-  echo -e "  ${YEL}    1. Review crash log:         cat $CRASH_LOG${RST}"
-  echo -e "  ${YEL}    2. Attempt restart:          systemctl restart $SVC${RST}"
-  echo -e "  ${YEL}    3. After fixing root cause — clear failed state:${RST}"
-  echo -e "  ${YEL}       systemctl reset-failed $SVC${RST}"
-  echo -e "  ${YEL}       (reset-failed clears systemd's memory of the crash${RST}"
-  echo -e "  ${YEL}        so future restarts are not blocked — run AFTER fixing)${RST}"
-  echo -e "  ${YEL}    4. Watch it live:             journalctl -fu $SVC${RST}"
-  echo -e "  ${YEL}    5. Escalate if unresolved:    contact senior engineer${RST}"
-  echo ""
+  fix "1. Read crash log:           cat $CRASH_LOG
+2. Restart the service:      systemctl restart $SVC
+3. After fixing root cause — clear failed state:
+   systemctl reset-failed $SVC
+   (clears systemd's crash memory so future restarts are not blocked)
+4. If not auto-restarting — add to unit file: Restart=on-failure
+   Then: systemctl daemon-reload && systemctl restart $SVC
+5. Watch it live:            journalctl -fu $SVC
+6. Escalate if unresolved:   contact senior engineer"
 }
 
-# ---------- main failed service detection ----------
 info "Services that have crashed or failed:"
 divider
-
 FAILED_SERVICES=$(systemctl --failed --type=service 2>/dev/null | grep "●" | awk '{print $2}')
 FAILED_COUNT=$(echo "$FAILED_SERVICES" | grep -c "service" 2>/dev/null)
 FAILED_COUNT=$(to_int "${FAILED_COUNT:-0}")
 
 if [ "$FAILED_COUNT" -gt 0 ]; then
   crit "$FAILED_COUNT failed service(s) detected — running automated investigation..."
-  echo ""
-
   echo "$FAILED_SERVICES" | while IFS= read -r SVC; do
     [ -z "$SVC" ] && continue
     investigate_crashed_service "$SVC"
@@ -597,17 +609,15 @@ info "FATAL errors in logs (last 10 min):"
 divider
 FATAL_COUNT=$(journalctl --since "10 minutes ago" 2>/dev/null | grep -ic "fatal\|FATAL")
 FATAL_COUNT=$(to_int "${FATAL_COUNT:-0}")
-
 if [ "$FATAL_COUNT" -gt 0 ]; then
   crit "Found $FATAL_COUNT FATAL entries in last 10 minutes:"
+  autocheck "FATAL log entries with source service:"
   journalctl --since "10 minutes ago" 2>/dev/null | grep -i "fatal\|FATAL" | tail -10 | while IFS= read -r line; do
-    echo "    $line"
+    UNIT=$(echo "$line" | awk '{print $5}' | sed 's/\[.*//' | sed 's/://')
+    echo -e "    ${YEL}[${UNIT:-unknown}]${RST} $line"
   done
-  fix "1. Read full context:        journalctl -u <service> --since '10 minutes ago'
-2. Check which service:      journalctl -p crit --since '10 minutes ago'
-3. Check logs:               tail -50 /opt/server-health/logs/*.log | grep -i fatal
-4. Restart affected svc:     systemctl restart <service>
-5. If recurring FATAL:       escalate — do not just restart in a loop"
+  fix "1. Restart the affected service (identified above): systemctl restart <service>
+2. If recurring FATAL — do not just keep restarting: escalate to senior engineer"
 else
   ok "No FATAL errors in last 10 minutes"
 fi
@@ -623,59 +633,47 @@ ERROR_COUNT=$(to_int "${ERROR_COUNT:-0}")
 
 if [ "$ERROR_COUNT" -ge 50 ]; then
   crit "$ERROR_COUNT errors in last 10 min — system is struggling!"
-  fix "1. See all errors:           journalctl -p err --since '10 minutes ago'
-2. Find which service:       journalctl -p err --since '10 minutes ago' | awk '{print \$5}' | sort | uniq -c | sort -rn
-3. Check logs:               grep -i error /opt/server-health/logs/*.log | tail -20
-4. Watch live errors:        journalctl -f -p err
-5. Escalate if unresolved:   contact senior engineer"
+  autocheck "Errors per service (top offenders):"
+  journalctl -p err --since "10 minutes ago" --no-pager 2>/dev/null | grep -v "^--" | \
+    awk '{print $5}' | sed 's/\[.*//' | sed 's/://' | sort | uniq -c | sort -rn | head -10 | \
+    while IFS= read -r l; do echo "    $l"; done
+  fix "1. Restart the highest-error service (shown above): systemctl restart <service>
+2. Escalate to senior engineer if errors persist after restart"
 elif [ "$ERROR_COUNT" -ge 10 ]; then
   warn "$ERROR_COUNT errors in last 10 min — needs attention"
-  fix "1. Review errors:            journalctl -p err --since '10 minutes ago' | tail -20
-2. Identify source service:  journalctl -p err --since '10 minutes ago' | grep -oP 'unit=\S+'"
+  autocheck "Errors per service:"
+  journalctl -p err --since "10 minutes ago" --no-pager 2>/dev/null | grep -v "^--" | \
+    awk '{print $5}' | sed 's/\[.*//' | sed 's/://' | sort | uniq -c | sort -rn | head -5 | \
+    while IFS= read -r l; do echo "    $l"; done
+  fix "1. Investigate the top error source above: journalctl -u <service> -n 50"
 else
   ok "$ERROR_COUNT errors in last 10 min — normal"
 fi
 
 echo ""
-info "Error lines with 1 line before and 2 lines after:"
+info "Error lines with context (source file shown per entry):"
 divider
-
 if [ -f /var/log/syslog ]; then
-  info "Source file : /var/log/syslog"
+  info "Source file: /var/log/syslog"
   divider
   grep -n -i "error\|fatal\|critical" /var/log/syslog | tail -5 | while IFS= read -r match; do
     LINENUM=$(echo "$match" | cut -d: -f1)
-    # Extract the service/process name from the matching line (field between hostname and colon)
-    SERVICE=$(echo "$match" | awk '{for(i=1;i<=NF;i++) if($i~/\[/ || $i~/:$/) {gsub(/\[.*|\]/,"",$i); gsub(/:$/,"",$i); print $i; exit}}')
-    START=$((LINENUM - 1))
-    END=$((LINENUM + 2))
-    echo -e "  ${YEL}--- Line $LINENUM | Source: /var/log/syslog | Process: ${SERVICE:-unknown} ---${RST}"
+    SERVICE=$(echo "$match" | awk '{for(i=1;i<=NF;i++) if($i~/\[/||$i~/:$/){gsub(/\[.*|\]/,"",$i);gsub(/:$/,"",$i);print $i;exit}}')
+    START=$((LINENUM - 1)); END=$((LINENUM + 2))
+    echo -e "  ${YEL}--- Line $LINENUM | /var/log/syslog | Process: ${SERVICE:-unknown} ---${RST}"
     sed -n "${START},${END}p" /var/log/syslog | while IFS= read -r l; do echo "    $l"; done
     echo ""
   done
 else
-  # journalctl path — show unit name clearly for each error
-  info "Source file : journalctl (no /var/log/syslog found)"
+  info "Source: journalctl (no /var/log/syslog found)"
   divider
-  journalctl -p err --since "10 minutes ago" -o verbose 2>/dev/null | \
-    grep -E "^    (MESSAGE|_SYSTEMD_UNIT|SYSLOG_IDENTIFIER|_EXE)" | \
-    paste - - - - 2>/dev/null | head -10 | while IFS= read -r line; do
-      echo "  $line"
-  done
-
-  # Fallback: plain output with unit highlighted
-  echo ""
-  info "Full error entries (last 10 min):"
-  divider
-  journalctl -p err --since "10 minutes ago" --no-pager 2>/dev/null | grep -v "^--" | \
-    tail -20 | while IFS= read -r line; do
-      # Extract unit/service from journalctl line (format: date host unit[pid]: message)
+  journalctl -p err --since "10 minutes ago" --no-pager 2>/dev/null | grep -v "^--" | tail -20 | \
+    while IFS= read -r line; do
       UNIT=$(echo "$line" | awk '{print $5}' | sed 's/\[.*//' | sed 's/://')
       echo -e "  ${YEL}[src: ${UNIT:-unknown}]${RST} $line"
-  done
+    done
 fi
 
-# Always show a per-service error breakdown for the last 10 min
 echo ""
 info "Errors per service (last 10 min):"
 divider
@@ -689,7 +687,7 @@ journalctl -p err --since "10 minutes ago" --no-pager 2>/dev/null | grep -v "^--
     elif [ "$COUNT" -ge 2 ]; then
       echo -e "  ${YEL}  $COUNT errors${RST}  from  ${BLD}$SVC${RST}"
     else
-      echo -e "    $COUNT error   from  $SVC"
+      echo "    $COUNT error   from  $SVC"
     fi
   done
 
@@ -700,26 +698,37 @@ section "11. OPEN FILES & FILE DESCRIPTORS"
 OPEN_FILES=$(lsof 2>/dev/null | wc -l)
 OPEN_FILES=$(to_int "${OPEN_FILES:-0}")
 info "Total open file descriptors : $OPEN_FILES"
+info "System FD limit             : $(cat /proc/sys/fs/file-max)"
+info "Current FD usage            : $(awk '{print $1}' /proc/sys/fs/file-nr)"
 divider
 
 if [ "$OPEN_FILES" -ge "$OFD_CRIT" ]; then
   crit "Open FDs $OPEN_FILES — file descriptor leak possible!"
-  fix "1. Find which proc leaks:    lsof 2>/dev/null | awk '{print \$1}' | sort | uniq -c | sort -rn | head -10
-2. Check per-process FDs:    lsof -p <PID> | wc -l
-3. See system FD limit:      cat /proc/sys/fs/file-max
-4. Increase limit temp:      ulimit -n 100000
-5. Restart leaking service:  systemctl restart <service>
-6. Raise system limit perm:  echo 'fs.file-max = 500000' >> /etc/sysctl.conf && sysctl -p"
+  autocheck "Top FD consumers right now:"
+  lsof 2>/dev/null | awk '{print $1}' | sort | uniq -c | sort -rn | head -10 | \
+    while IFS= read -r l; do echo "    $l"; done
+  autocheck "FD count for top consumer:"
+  TOP_PROC=$(lsof 2>/dev/null | awk '{print $1}' | sort | uniq -c | sort -rn | awk 'NR==2{print $2}')
+  TOP_PID=$(pgrep -x "$TOP_PROC" 2>/dev/null | head -1)
+  [ -n "$TOP_PID" ] && echo "    $TOP_PROC has $(lsof -p "$TOP_PID" 2>/dev/null | wc -l) open FDs"
+  [ -n "$TOP_PID" ] && cat /proc/"$TOP_PID"/limits 2>/dev/null | grep "open files" | \
+    while IFS= read -r l; do echo "    limit: $l"; done
+  autocheck "Temporarily raising system FD limit to 100000:"
+  ulimit -n 100000 && echo "    Done — limit raised" || echo "    Could not raise limit"
+  fix "1. Restart the leaking process (identified above): systemctl restart <service>
+2. Make FD limit permanent in unit file:  LimitNOFILE=65536
+   Then: systemctl daemon-reload && systemctl restart <service>
+3. Raise system limit permanently:  echo 'fs.file-max=500000' >> /etc/sysctl.conf && sysctl -p"
 elif [ "$OPEN_FILES" -ge "$OFD_WARN" ]; then
   warn "Open FDs $OPEN_FILES — getting high"
-  fix "1. Check top FD consumers:   lsof 2>/dev/null | awk '{print \$1}' | sort | uniq -c | sort -rn | head -5
-2. Watch trend:               watch -n 5 'lsof | wc -l'"
+  autocheck "Top 5 FD consumers:"
+  lsof 2>/dev/null | awk '{print $1}' | sort | uniq -c | sort -rn | head -5 | \
+    while IFS= read -r l; do echo "    $l"; done
+  fix "1. Monitor trend: watch -n 30 'lsof | wc -l'
+2. If growing steadily — restart the top consumer: systemctl restart <service>"
 else
   ok "Open FDs $OPEN_FILES — healthy"
 fi
-
-info "System FD limit : $(cat /proc/sys/fs/file-max)"
-info "Current FD usage: $(awk '{print $1}' /proc/sys/fs/file-nr)"
 
 # ============================================================
 section "12. LISTENING PORTS"
@@ -748,42 +757,52 @@ info "CLOSE_WAIT   : $CLOSE_WAIT"
 
 if [ "$TIME_WAIT" -gt 100 ]; then
   warn "High TIME_WAIT ($TIME_WAIT) — possible connection leak"
-  fix "1. See what connections:     ss -an | grep TIME-WAIT | head -20
-2. Reduce TIME_WAIT timeout: echo 30 > /proc/sys/net/ipv4/tcp_fin_timeout
-3. Enable port reuse:        echo 1 > /proc/sys/net/ipv4/tcp_tw_reuse"
+  autocheck "Top 10 TIME_WAIT connections:"
+  ss -an 2>/dev/null | grep "TIME-WAIT" | head -10 | while IFS= read -r l; do echo "    $l"; done
+  autocheck "Applying TCP fin_timeout reduction and port reuse:"
+  echo 30 > /proc/sys/net/ipv4/tcp_fin_timeout && echo "    tcp_fin_timeout set to 30"
+  echo 1 > /proc/sys/net/ipv4/tcp_tw_reuse && echo "    tcp_tw_reuse enabled"
+  fix "1. Monitor if TIME_WAIT count drops: watch -n 5 'ss -an | grep -c TIME-WAIT'
+2. If it keeps growing — investigate connection handling in application code"
 fi
 
 if [ "$CLOSE_WAIT" -gt 50 ]; then
   crit "High CLOSE_WAIT ($CLOSE_WAIT) — app not closing connections!"
-  fix "1. Find which app:           ss -anp | grep CLOSE-WAIT | head -20
-2. Connections must be explicitly closed — this is a code/config bug
-3. Restart offending svc:    systemctl restart <service>
-4. Watch if grows:           watch -n 2 'ss -an | grep -c CLOSE-WAIT'"
+  autocheck "CLOSE_WAIT connections by process:"
+  ss -anp 2>/dev/null | grep "CLOSE-WAIT" | awk '{print $6}' | \
+    sed 's/.*,//' | sed 's/".*//' | sort | uniq -c | sort -rn | head -10 | \
+    while IFS= read -r l; do echo "    $l"; done
+  fix "1. Restart the offending service (identified above): systemctl restart <service>
+2. This is a code bug — connections must be closed after remote sends FIN
+3. Watch if it returns: watch -n 5 'ss -an | grep -c CLOSE-WAIT'"
 fi
 
 echo ""
 info "Ping test (gateway):"
 GW=$(ip route | awk '/default/ {print $3}' | head -1)
 if [ -n "$GW" ]; then
-  PING_RESULT=$(ping -c 4 "$GW" 2>/dev/null | tail -2)
+  autocheck "Running extended ping (10 packets) to gateway $GW:"
+  PING_RESULT=$(ping -c 10 "$GW" 2>/dev/null | tail -3)
+  echo "$PING_RESULT" | while IFS= read -r l; do echo "    $l"; done
   PACKET_LOSS=$(echo "$PING_RESULT" | grep -oP '\d+(?=% packet loss)')
   PACKET_LOSS=$(to_int "${PACKET_LOSS:-0}")
   if [ "$PACKET_LOSS" -ge 50 ]; then
     crit "Packet loss ${PACKET_LOSS}% to gateway $GW"
-    fix "1. Run extended ping:        ping -c 20 $GW
-2. Trace the route:          traceroute $GW
-3. Check NIC errors:         ip -s link show eth0
-4. Contact network team:     provide traceroute output
-5. Escalate immediately:     network loss = service disruption"
+    autocheck "Traceroute to gateway:"
+    traceroute -m 5 "$GW" 2>/dev/null | while IFS= read -r l; do echo "    $l"; done
+    autocheck "NIC error counters:"
+    ip -s link show 2>/dev/null | grep -A4 "^[0-9]" | while IFS= read -r l; do echo "    $l"; done
+    fix "1. Contact network team with traceroute output shown above
+2. Escalate immediately — network loss = service disruption"
   elif [ "$PACKET_LOSS" -ge 10 ]; then
     warn "Packet loss ${PACKET_LOSS}% to gateway $GW"
-    fix "1. Confirm with longer ping: ping -c 20 $GW
-2. Check interface errors:   ip -s link show
-3. Trace route:              traceroute $GW"
+    autocheck "Interface error counters:"
+    ip -s link show 2>/dev/null | grep -E "errors|dropped" | while IFS= read -r l; do echo "    $l"; done
+    fix "1. Contact network team if packet loss persists
+2. Check physical cable / switch port"
   else
     ok "No packet loss to gateway $GW"
   fi
-  echo "  $PING_RESULT"
 else
   warn "Could not determine default gateway"
 fi
@@ -792,41 +811,32 @@ fi
 section "14. SYSTEMD SERVICES STATUS"
 # ============================================================
 
-# BUG FIX: only show active services in main list
-# Only flag inactive for non-template, non-oneshot services
 info "Active enabled services:"
 divider
 systemctl list-unit-files --type=service --state=enabled 2>/dev/null | grep enabled | while IFS= read -r line; do
   SVC=$(echo "$line" | awk '{print $1}')
   STATUS=$(systemctl is-active "$SVC" 2>/dev/null)
-  if [ "$STATUS" = "active" ]; then
-    echo -e "  ${GRN}[active]${RST} $SVC"
-  fi
+  [ "$STATUS" = "active" ] && echo -e "  ${GRN}[active]${RST} $SVC"
 done
 
 echo ""
-info "Enabled services that are not running:"
+info "Enabled services that are not running (unexpected):"
 divider
-FOUND=0
 systemctl list-unit-files --type=service --state=enabled 2>/dev/null | grep enabled | while IFS= read -r line; do
   SVC=$(echo "$line" | awk '{print $1}')
   STATUS=$(systemctl is-active "$SVC" 2>/dev/null)
   if [ "$STATUS" != "active" ]; then
-    # Skip expected-inactive services (oneshot, templates, boot-only)
     case "$SVC" in
       *@*|e2scrub*|grub*|secureboot*|sshd-keygen*|pollinate*|ua-reboot*|\
       snapd.core-fixup*|snapd.recovery*|snapd.system-shutdown*|snapd.autoimport*|\
       cloud-*|dmesg*|gpu-manager*|getty*|thermald*|open-iscsi*|vgauth*|\
-      ubuntu-advantage*|open-vm-tools*)
-        ;;  # silently skip — expected to be inactive
+      ubuntu-advantage*|open-vm-tools*) ;;
       *)
         echo -e "  ${YEL}[inactive]${RST} $SVC"
-        FOUND=1
         ;;
     esac
   fi
 done
-[ "$FOUND" -eq 0 ] 2>/dev/null && ok "No unexpected inactive services"
 
 # ============================================================
 section "15. TOP DIRECTORY DISK CONSUMERS"
@@ -834,9 +844,7 @@ section "15. TOP DIRECTORY DISK CONSUMERS"
 
 info "Top 10 directories consuming disk (entire system):"
 divider
-du -h --max-depth=2 / 2>/dev/null | sort -rh | head -10 | while IFS= read -r line; do
-  echo "  $line"
-done
+du -h --max-depth=2 / 2>/dev/null | sort -rh | head -10 | while IFS= read -r line; do echo "  $line"; done
 
 # ============================================================
 section "16. VMSTAT SNAPSHOT"
@@ -851,20 +859,22 @@ info "Column guide: r=run queue, b=blocked, si/so=swap in/out, bi/bo=block in/ou
 VMSTAT_LINE=$(vmstat 1 2 2>/dev/null | tail -1)
 SWAP_IN=$(echo "$VMSTAT_LINE" | awk '{print $7}')
 SWAP_OUT=$(echo "$VMSTAT_LINE" | awk '{print $8}')
-SWAP_IN=$(to_int "${SWAP_IN:-0}")
-SWAP_OUT=$(to_int "${SWAP_OUT:-0}")
+SWAP_IN=$(to_int "${SWAP_IN:-0}"); SWAP_OUT=$(to_int "${SWAP_OUT:-0}")
 
 if [ "$SWAP_IN" -gt 0 ]; then
   warn "Swap-in activity detected ($SWAP_IN) — memory pressure!"
-  fix "1. Find memory hogs:         ps aux --sort=-%mem | head -10
-2. Check swap usage:         free -h
-3. Restart memory hog:       systemctl restart <service>"
+  autocheck "Current memory state:"
+  free -h | while IFS= read -r l; do echo "    $l"; done
+  autocheck "Top memory consumers:"
+  ps aux --sort=-%mem | awk 'NR>1 && NR<=4{printf "    %-10s %-8s %-6s %s\n",$1,$2,$4,$11}'
+  fix "1. Restart the largest memory consumer (shown above): systemctl restart <service>"
 fi
 if [ "$SWAP_OUT" -gt 0 ]; then
   warn "Swap-out activity detected ($SWAP_OUT) — paging to disk!"
-  fix "1. Confirm with:             vmstat 1 10  (si/so should be 0 when healthy)
-2. Run swap setup script:    bash add_swap.sh
-3. Reduce swappiness:        echo 10 > /proc/sys/vm/swappiness"
+  autocheck "Swap activity detail:"
+  vmstat 1 5 2>/dev/null | awk 'NR>1{printf "    si=%-6s so=%s\n",$7,$8}'
+  fix "1. Restart the largest memory consumer: systemctl restart <service>
+2. Add more swap if needed:               bash add_swap.sh"
 fi
 
 # ============================================================
@@ -913,16 +923,13 @@ SWAP_STATUS="OK"
 [ "$SWAP_TOTAL" -eq 0 ] && SWAP_STATUS="WARN"
 print_row "Swap Usage" "${SWAP_PCT}%" "$SWAP_STATUS" "warn>${SWAP_WARN}% crit>${SWAP_CRIT}%"
 
-OOM_STATUS="OK"
-[ "$OOM_COUNT" -gt 0 ] && OOM_STATUS="CRIT"
+OOM_STATUS="OK"; [ "$OOM_COUNT" -gt 0 ] && OOM_STATUS="CRIT"
 print_row "OOM Crashes" "$OOM_COUNT events" "$OOM_STATUS" "crit>0"
 
-ZOMBIE_STATUS="OK"
-[ "$ZOMBIE_COUNT" -gt 0 ] && ZOMBIE_STATUS="WARN"
+ZOMBIE_STATUS="OK"; [ "$ZOMBIE_COUNT" -gt 0 ] && ZOMBIE_STATUS="WARN"
 print_row "Zombie Processes" "$ZOMBIE_COUNT" "$ZOMBIE_STATUS" "warn>0"
 
-FAIL_STATUS="OK"
-[ "$FAILED_COUNT" -gt 0 ] && FAIL_STATUS="CRIT"
+FAIL_STATUS="OK"; [ "$FAILED_COUNT" -gt 0 ] && FAIL_STATUS="CRIT"
 print_row "Failed Services" "$FAILED_COUNT" "$FAIL_STATUS" "crit>0"
 
 FATAL_STATUS="OK"
@@ -940,10 +947,8 @@ OFD_STATUS="OK"
 [ "$OPEN_FILES" -ge "$OFD_CRIT" ] && OFD_STATUS="CRIT"
 print_row "Open File Descriptors" "$OPEN_FILES" "$OFD_STATUS" "warn>${OFD_WARN} crit>${OFD_CRIT}"
 
-CW_STATUS="OK"
-[ "$CLOSE_WAIT" -gt 50  ] && CW_STATUS="CRIT"
-TW_STATUS="OK"
-[ "$TIME_WAIT"  -gt 100 ] && TW_STATUS="WARN"
+CW_STATUS="OK"; [ "$CLOSE_WAIT" -gt 50  ] && CW_STATUS="CRIT"
+TW_STATUS="OK"; [ "$TIME_WAIT"  -gt 100 ] && TW_STATUS="WARN"
 print_row "CLOSE_WAIT conns" "$CLOSE_WAIT" "$CW_STATUS" "crit>50"
 print_row "TIME_WAIT conns" "$TIME_WAIT" "$TW_STATUS" "warn>100"
 
