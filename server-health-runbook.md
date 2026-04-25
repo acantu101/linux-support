@@ -1,6 +1,6 @@
-# 🖥️ Trading Server — Incident Runbook
+# 🖥️  Server — Incident Runbook
 
-> Structured troubleshooting guide for Linux production trading servers.
+> Structured troubleshooting guide for Linux production servers.
 > Each issue includes symptoms, diagnosis commands, step-by-step remediation, and escalation criteria.
 
 **Version:** 1.0 &nbsp;|&nbsp; **OS:** Ubuntu 24.04 LTS &nbsp;|&nbsp; **Updated:** Apr 2026 &nbsp;|&nbsp; **Audience:** SysAdmin / On-call Engineer
@@ -68,7 +68,7 @@
 - Load average exceeds core count
 
 **Possible Causes**
-- Trading process stuck in a loop or processing backlog
+- process stuck in a loop or processing backlog
 - Market data feed spiking during high-volatility period
 - Scheduled cron job (log rotation, backup) running at wrong time
 - Memory pressure causing kernel to thrash (`%sy` elevated)
@@ -88,7 +88,7 @@ uptime   # compare load to: nproc
    ```
 2. Confirm it is not a legitimate spike (market open, data replay):
    ```bash
-   journalctl -u trading --since '10 minutes ago' | tail -20
+   journalctl -u <service-name> --since '10 minutes ago' | tail -20
    ```
 3. Trace what the process is doing:
    ```bash
@@ -112,12 +112,12 @@ uptime   # compare load to: nproc
    ```
 
 > [!CAUTION]
-> **Escalate when:** CPU stays above 90% for more than 5 minutes after restart, or the offending process is the core trading engine.
+> **Escalate when:** CPU stays above 90% for more than 5 minutes after restart, or the offending process is the core production engine.
 
 > [!TIP]
 > **Prevention:**
 > - Set CPU limits per service in systemd: `CPUQuota=80%`
-> - Schedule cron jobs outside trading hours (before 07:00 or after 18:00)
+> - Schedule cron jobs outside business hours (before 07:00 or after 18:00)
 > - Monitor CPU trend with `sar -u 1 10` and alert on sustained > 70%
 
 ---
@@ -133,17 +133,17 @@ uptime   # compare load to: nproc
 - Log files writing slowly or with truncated entries
 
 **Possible Causes**
-- Trading logs writing faster than disk can handle
+- logs writing faster than disk can handle
 - Database performing full table scans to disk
 - Disk partition nearly full causing fragmentation
 - Hardware disk degradation or impending failure
-- Backup job running during trading hours
+- Backup job running during business hours
 
 **Diagnose First**
 ```bash
 iostat -x 1 5        # look at %util, r_await, w_await
 iotop -o             # find which process is doing the I/O
-du -h /opt/trading/logs | sort -rh | head -10
+du -h /opt/server-health/logs | sort -rh | head -10
 ```
 
 **Remediation Steps**
@@ -158,11 +158,11 @@ du -h /opt/trading/logs | sort -rh | head -10
    ```
 3. Check if logs are growing uncontrolled:
    ```bash
-   ls -lth /opt/trading/logs/ | head -10
+   ls -lth /opt/server-health/logs/ | head -10
    ```
 4. Clean up old log files immediately:
    ```bash
-   find /opt/trading/logs -name '*.log' -mtime +7 -delete
+   find /opt/server-health/logs -name '*.log' -mtime +7 -delete
    ```
 5. Clear systemd journal if large:
    ```bash
@@ -180,8 +180,8 @@ du -h /opt/trading/logs | sort -rh | head -10
 > [!TIP]
 > **Prevention:**
 > - Rotate logs daily, keep only 7 days on disk
-> - Mount `/opt/trading` on a dedicated SSD partition
-> - Run backups after trading hours: `ionice -c3 rsync ...`
+> - Mount `/opt/server-health` on a dedicated SSD partition
+> - Run backups after business hours: `ionice -c3 rsync ...`
 > - Set log level to `WARN` in production (not `DEBUG`)
 
 ---
@@ -224,11 +224,11 @@ top -b -n 1 | grep Cpu            # check st value
 6. Long-term: move to dedicated instance or bare metal
 
 > [!CAUTION]
-> **Escalate when:** `%steal` stays above 10% for 15 minutes and trading latency is measurably impacted.
+> **Escalate when:** `%steal` stays above 10% for 15 minutes and latency is measurably impacted.
 
 > [!TIP]
 > **Prevention:**
-> - Use dedicated or reserved instances for production trading servers
+> - Use dedicated or reserved instances for production servers
 > - Choose cloud regions/zones with less contention
 > - Monitor `%steal` daily as part of health checks
 
@@ -249,7 +249,7 @@ top -b -n 1 | grep Cpu            # check st value
 - OOM killer may start terminating processes
 
 **Possible Causes**
-- Memory leak in trading application — RSS grows over time
+- Memory leak in application — RSS grows over time
 - Too many concurrent connections held in memory
 - Market data stored in memory not being flushed
 - Cache not releasing — `buff/cache` growing unbounded
@@ -275,9 +275,9 @@ cat /proc/<PID>/status | grep -E 'VmRSS|VmSwap|VmPeak'
    ```bash
    echo 1 > /proc/sys/vm/drop_caches
    ```
-4. If trading service is the hog, restart it:
+4. If service is the hog, restart it:
    ```bash
-   systemctl restart trading
+   systemctl restart service
    ```
 5. Add swap as an emergency safety net:
    ```bash
@@ -328,9 +328,9 @@ cat /proc/<PID>/oom_score   # higher = more likely to be killed
    ```bash
    systemctl restart <service>
    ```
-3. Protect the critical trading process from future OOM kills:
+3. Protect the critical process from future OOM kills:
    ```bash
-   echo -1000 > /proc/$(pgrep trading)/oom_score_adj
+   echo -1000 > /proc/$(pgrep <app name>)/oom_score_adj
    ```
 4. Add swap to prevent future OOM events:
    ```bash
@@ -346,12 +346,12 @@ cat /proc/<PID>/oom_score   # higher = more likely to be killed
    ```
 
 > [!CAUTION]
-> **Escalate when:** OOM fires more than once in an hour, or the trading engine itself was killed.
+> **Escalate when:** OOM fires more than once in an hour, or the engine itself was killed.
 
 > [!TIP]
 > **Prevention:**
-> - Always configure swap — minimum 2x RAM for trading servers
-> - Set `oom_score_adj = -1000` for critical trading PIDs at startup
+> - Always configure swap — minimum 2x RAM for servers
+> - Set `oom_score_adj = -1000` for critical PIDs at startup
 > - Set `MemoryMax` in systemd unit files to cap per-service usage
 > - Alert when memory exceeds 80% — don't wait for OOM
 
@@ -427,7 +427,7 @@ smem -s swap | head -10   # apt install smem
 **Diagnose First**
 ```bash
 df -h                                         # which partition is full?
-du -h /opt/trading | sort -rh | head -10      # largest directories
+du -h /opt/server-health | sort -rh | head -10      # largest directories
 find / -type f -size +500M 2>/dev/null        # files over 500MB
 lsof | grep deleted | head -20                # deleted but still held open
 ```
@@ -440,7 +440,7 @@ lsof | grep deleted | head -20                # deleted but still held open
    ```
 2. Delete old log files immediately:
    ```bash
-   find /opt/trading/logs -name '*.log' -mtime +7 -delete
+   find /opt/server-health/logs -name '*.log' -mtime +7 -delete
    ```
 3. Clear systemd journal:
    ```bash
@@ -461,14 +461,14 @@ lsof | grep deleted | head -20                # deleted but still held open
    ```
 
 > [!CAUTION]
-> **Escalate when:** Disk at 95%+ and cannot immediately free space. Trading logs cannot write — this is a service-impacting incident.
+> **Escalate when:** Disk at 95%+ and cannot immediately free space. Service logs cannot write — this is a service-impacting incident.
 
 > [!TIP]
 > **Prevention:**
-> - Set up `logrotate` for `/opt/trading/logs` — rotate daily, keep 7 days
-> - Add cron cleanup: `find /opt/trading/logs -name '*.log' -mtime +7 -delete`
+> - Set up `logrotate` for `/opt/server-health/logs` — rotate daily, keep 7 days
+> - Add cron cleanup: `find /opt/server-health/logs -name '*.log' -mtime +7 -delete`
 > - Alert at 80% — never let it reach 90% unmanaged
-> - Mount `/opt/trading` on a separate partition from `/`
+> - Mount `/opt/server-health` on a separate partition from `/`
 
 ---
 
@@ -519,7 +519,7 @@ find / -xdev -type d | xargs -I{} sh -c \
    ```
 5. Delete old small log files:
    ```bash
-   find /opt/trading/logs -name '*.log' -mtime +3 -delete
+   find /opt/server-health/logs -name '*.log' -mtime +3 -delete
    ```
 6. Verify inodes are freed:
    ```bash
@@ -534,7 +534,7 @@ find / -xdev -type d | xargs -I{} sh -c \
 > - Never log one-file-per-trade — use rolling log files
 > - Cron: clean `/tmp` and `/var/tmp` weekly
 > - Monitor inode usage as part of weekly health checks
-> - Create `/opt/trading` on its own partition with appropriate inode count
+> - Create `/opt/server-health` on its own partition with appropriate inode count
 
 ---
 
@@ -550,7 +550,7 @@ find / -xdev -type d | xargs -I{} sh -c \
 
 **Possible Causes**
 - Disk is saturated — too many concurrent read/write operations
-- HDD (spinning disk) too slow for trading workload — SSD needed
+- HDD (spinning disk) too slow for workload — SSD needed
 - Disk hardware beginning to fail (reallocated sectors)
 - RAID rebuild in progress
 
@@ -575,13 +575,13 @@ smartctl -a /dev/sda             # disk health and error count
    ```bash
    smartctl -a /dev/sda | grep -i 'reallocated\|error\|pending'
    ```
-4. Reduce write pressure — lower log verbosity in trading config:
+4. Reduce write pressure — lower log verbosity in config:
    ```bash
-   # In trading config: set log_level = WARN (not DEBUG)
+   # In config: set log_level = WARN (not DEBUG)
    ```
 5. Use `tmpfs` for non-critical temp data:
    ```bash
-   mount -t tmpfs -o size=512m tmpfs /opt/trading/tmp
+   mount -t tmpfs -o size=512m tmpfs /opt/server-health/tmp
    ```
 6. If SMART shows errors — disk is failing, **replace immediately and escalate**
 
@@ -590,7 +590,7 @@ smartctl -a /dev/sda             # disk health and error count
 
 > [!TIP]
 > **Prevention:**
-> - Use SSDs for trading server storage
+> - Use SSDs for server storage
 > - Separate OS, logs, and market data onto different volumes
 > - Run `smartctl` health check weekly via cron
 > - Use `ionice -c3` for backup jobs to lower their I/O priority
@@ -712,11 +712,11 @@ ps aux | grep <PPID>                     # what is the parent?
 > **Note:** You cannot kill a zombie directly — only killing the parent process cleans them up.
 
 > [!CAUTION]
-> **Escalate when:** Zombie count growing rapidly (> 50), or parent process is the trading engine itself.
+> **Escalate when:** Zombie count growing rapidly (> 50), or parent process is the engine itself.
 
 > [!TIP]
 > **Prevention:**
-> - Ensure trading application properly calls `wait()` or `waitpid()` on child exit
+> - Ensure application properly calls `wait()` or `waitpid()` on child exit
 > - Use systemd to manage child processes — it reaps zombies automatically
 > - Alert when zombie count exceeds 5
 
@@ -842,7 +842,7 @@ ethtool eth0 | grep -i link  # link speed and duplex
 7. Escalate to network team with `traceroute` output
 
 > [!CAUTION]
-> **Escalate when:** Any packet loss to the exchange — trading halt may be required. Contact network team and exchange immediately.
+> **Escalate when:** Any packet loss to the exchange — halt may be required. Contact network team and exchange immediately.
 
 > [!TIP]
 > **Prevention:**
@@ -895,11 +895,11 @@ ss -anp | grep CLOSE-WAIT | head -20   # which process?
 5. Root cause: this is a **code bug** — connections must be explicitly closed after receiving `FIN` from peer. Raise with development team.
 
 > [!CAUTION]
-> **Escalate when:** `CLOSE_WAIT` above 200 and connection pool is exhausted — application cannot accept new trading connections.
+> **Escalate when:** `CLOSE_WAIT` above 200 and connection pool is exhausted — application cannot accept new connections.
 
 > [!TIP]
 > **Prevention:**
-> - Implement proper connection lifecycle in trading application
+> - Implement proper connection lifecycle in application
 > - Use connection timeout settings in all client libraries
 > - Enable TCP keepalives at socket level in application code
 
@@ -968,7 +968,7 @@ top -b -n 1 | head -20                 # who is consuming?
 |---|---|---|
 | System slow, SSH laggy | `uptime && top -b -n1 \| head -5` | Find CPU hog: `ps aux --sort=-%cpu` |
 | CPU busy but nothing obvious | `top -b -n1 \| grep Cpu` (check `%wa`) | High iowait → run `iostat -x 1 5` |
-| "No space left on device" | `df -h` | Clean logs: `find /opt/trading/logs -mtime +7 -delete` |
+| "No space left on device" | `df -h` | Clean logs: `find /opt/server-health/logs -mtime +7 -delete` |
 | Disk has space but can't create files | `df -i` | Inode full → delete small files in `/tmp` |
 | App offline, no crash visible | `systemctl --failed` | Restart: `systemctl restart <service>` |
 | Orders not reaching exchange | `ping -c 10 <exchange-ip>` | Packet loss → contact network team |
@@ -995,4 +995,4 @@ top -b -n 1 | head -20                 # who is consuming?
 
 ---
 
-*Trading Server Incident Runbook — v1.0 &nbsp;|&nbsp; Ubuntu 24.04 LTS · systemd · /opt/trading*
+* Server Incident Runbook — v1.0 &nbsp;|&nbsp; Ubuntu 24.04 LTS · systemd · /opt/server-health*
