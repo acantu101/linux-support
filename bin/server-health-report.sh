@@ -429,24 +429,158 @@ fi
 section "9. CRASHED / FATAL SERVICES"
 # ============================================================
 
+# ---------- helper: full automated crash investigation ----------
+investigate_crashed_service() {
+  local SVC="$1"
+  local CRASH_DATE
+  CRASH_DATE=$(date +%Y%m%d_%H%M%S)
+  local CLEAN_SVC
+  CLEAN_SVC=$(echo "$SVC" | sed 's/\.service$//')
+  local CRASH_LOG="$REPORT_DIR/${CLEAN_SVC}_crash_${CRASH_DATE}.txt"
+
+  echo -e "\n  ${RED}${BLD}══ CRASH INVESTIGATION: $SVC ══${RST}"
+
+  {
+    echo "======================================================"
+    echo "  CRASH INVESTIGATION REPORT"
+    echo "  Service   : $SVC"
+    echo "  Generated : $(date)"
+    echo "  Server    : $(hostname)"
+    echo "======================================================"
+    echo ""
+
+    # ── 1. Current status ──────────────────────────────────
+    echo "------------------------------------------------------"
+    echo "  1. SYSTEMCTL STATUS"
+    echo "------------------------------------------------------"
+    systemctl status "$SVC" 2>/dev/null
+    echo ""
+
+    # ── 2. Restart policy ──────────────────────────────────
+    echo "------------------------------------------------------"
+    echo "  2. RESTART CONFIGURATION"
+    echo "------------------------------------------------------"
+    RESTART_POLICY=$(systemctl show "$SVC" --property=Restart 2>/dev/null | cut -d= -f2)
+    RESTART_SEC=$(systemctl show "$SVC" --property=RestartSec 2>/dev/null | cut -d= -f2)
+    START_LIMIT=$(systemctl show "$SVC" --property=StartLimitBurst 2>/dev/null | cut -d= -f2)
+    START_INTERVAL=$(systemctl show "$SVC" --property=StartLimitIntervalSec 2>/dev/null | cut -d= -f2)
+    echo "  Restart policy    : ${RESTART_POLICY:-not set}"
+    echo "  Restart delay     : ${RESTART_SEC:-not set}"
+    echo "  Start limit burst : ${START_LIMIT:-not set}"
+    echo "  Start limit window: ${START_INTERVAL:-not set}"
+    if [ "${RESTART_POLICY:-no}" = "no" ] || [ -z "$RESTART_POLICY" ]; then
+      echo "  ⚠️  WARNING: Service is NOT configured to restart on failure."
+      echo "  Add to unit file: Restart=on-failure"
+      echo "                    RestartSec=5"
+    else
+      echo "  ✅ Service will auto-restart on failure (Restart=$RESTART_POLICY)"
+    fi
+    echo ""
+
+    # ── 3. Exit code / failure reason ─────────────────────
+    echo "------------------------------------------------------"
+    echo "  3. FAILURE DETAILS"
+    echo "------------------------------------------------------"
+    EXIT_CODE=$(systemctl show "$SVC" --property=ExecMainStatus 2>/dev/null | cut -d= -f2)
+    RESULT=$(systemctl show "$SVC" --property=Result 2>/dev/null | cut -d= -f2)
+    MAIN_PID=$(systemctl show "$SVC" --property=MainPID 2>/dev/null | cut -d= -f2)
+    echo "  Exit code  : ${EXIT_CODE:-unknown}"
+    echo "  Result     : ${RESULT:-unknown}"
+    echo "  Last PID   : ${MAIN_PID:-unknown}"
+    echo ""
+
+    # ── 4. Last 50 log lines ───────────────────────────────
+    echo "------------------------------------------------------"
+    echo "  4. LAST 50 LOG ENTRIES (journalctl -u $SVC -n 50)"
+    echo "------------------------------------------------------"
+    journalctl -u "$SVC" -n 50 --no-pager 2>/dev/null
+    echo ""
+
+    # ── 5. Dependencies ────────────────────────────────────
+    echo "------------------------------------------------------"
+    echo "  5. SERVICE DEPENDENCIES"
+    echo "------------------------------------------------------"
+    systemctl list-dependencies "$SVC" 2>/dev/null
+    echo ""
+
+    # ── 6. Required-by (what depends on this service) ──────
+    echo "------------------------------------------------------"
+    echo "  6. REQUIRED BY (services that depend on $SVC)"
+    echo "------------------------------------------------------"
+    systemctl list-dependencies "$SVC" --reverse 2>/dev/null | head -20
+    echo ""
+
+    # ── 7. Unit file location ──────────────────────────────
+    echo "------------------------------------------------------"
+    echo "  7. UNIT FILE"
+    echo "------------------------------------------------------"
+    UNIT_FILE=$(systemctl show "$SVC" --property=FragmentPath 2>/dev/null | cut -d= -f2)
+    echo "  Unit file : ${UNIT_FILE:-not found}"
+    if [ -f "$UNIT_FILE" ]; then
+      echo ""
+      cat "$UNIT_FILE"
+    fi
+    echo ""
+
+    echo "======================================================"
+    echo "  END OF CRASH REPORT — $SVC"
+    echo "======================================================"
+
+  } | tee "$CRASH_LOG" | while IFS= read -r line; do echo "    $line"; done
+
+  echo ""
+  echo -e "  ${BLD}  📄 Crash log saved: $CRASH_LOG${RST}"
+
+  # ── Live display (in report only, not repeated in log) ──
+  echo ""
+  echo -e "  ${YEL}${BLD}  ▶ AUTOMATED CHECKS SUMMARY for $SVC:${RST}"
+
+  # Restart policy warning in report
+  if [ "${RESTART_POLICY:-no}" = "no" ] || [ -z "$RESTART_POLICY" ]; then
+    echo -e "  ${RED}    ✗ Not configured to restart on failure${RST}"
+    echo -e "  ${YEL}      Fix: add to unit file:  Restart=on-failure${RST}"
+    echo -e "  ${YEL}                              RestartSec=5${RST}"
+    echo -e "  ${YEL}      Then run:               systemctl daemon-reload${RST}"
+    echo -e "  ${YEL}                              systemctl restart $SVC${RST}"
+  else
+    echo -e "  ${GRN}    ✓ Auto-restart configured: Restart=$RESTART_POLICY${RST}"
+  fi
+
+  # Result / exit code
+  echo -e "  ${YEL}    Failure result : ${RESULT:-unknown}${RST}"
+  echo -e "  ${YEL}    Exit code      : ${EXIT_CODE:-unknown}${RST}"
+
+  # reset-failed note
+  echo ""
+  echo -e "  ${YEL}${BLD}  ▶ NEXT STEPS:${RST}"
+  echo -e "  ${YEL}    1. Review crash log:         cat $CRASH_LOG${RST}"
+  echo -e "  ${YEL}    2. Attempt restart:          systemctl restart $SVC${RST}"
+  echo -e "  ${YEL}    3. After fixing root cause — clear failed state:${RST}"
+  echo -e "  ${YEL}       systemctl reset-failed $SVC${RST}"
+  echo -e "  ${YEL}       (reset-failed clears systemd's memory of the crash${RST}"
+  echo -e "  ${YEL}        so future restarts are not blocked — run AFTER fixing)${RST}"
+  echo -e "  ${YEL}    4. Watch it live:             journalctl -fu $SVC${RST}"
+  echo -e "  ${YEL}    5. Escalate if unresolved:    contact senior engineer${RST}"
+  echo ""
+}
+
+# ---------- main failed service detection ----------
 info "Services that have crashed or failed:"
 divider
-systemctl list-units --type=service --state=failed 2>/dev/null | grep "●" | while IFS= read -r line; do
-  crit "FAILED SERVICE: $line"
-done
 
-FAILED_COUNT=$(systemctl --failed --type=service 2>/dev/null | grep -c "●")
+FAILED_SERVICES=$(systemctl --failed --type=service 2>/dev/null | grep "●" | awk '{print $2}')
+FAILED_COUNT=$(echo "$FAILED_SERVICES" | grep -c "service" 2>/dev/null)
 FAILED_COUNT=$(to_int "${FAILED_COUNT:-0}")
 
 if [ "$FAILED_COUNT" -gt 0 ]; then
-  crit "$FAILED_COUNT failed service(s) detected"
-  fix "1. See all failed:           systemctl --failed
-2. Read service logs:        journalctl -u <service> -n 50
-3. Check why it failed:      systemctl status <service>
-4. Attempt restart:          systemctl restart <service>
-5. Check start deps:         systemctl list-dependencies <service>
-6. Reset failed state:       systemctl reset-failed <service>
-7. Escalate to senior engineer if unresolved"
+  crit "$FAILED_COUNT failed service(s) detected — running automated investigation..."
+  echo ""
+
+  echo "$FAILED_SERVICES" | while IFS= read -r SVC; do
+    [ -z "$SVC" ] && continue
+    investigate_crashed_service "$SVC"
+    divider
+  done
 else
   ok "No failed services found"
 fi
