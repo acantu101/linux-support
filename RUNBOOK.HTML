@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Trading Server — Incident Runbook</title>
+<title>Server Health — Incident Runbook</title>
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet">
 <style>
   :root {
@@ -673,7 +673,7 @@
 <!-- ═══ SIDEBAR ═══ -->
 <nav class="sidebar">
   <div class="sidebar-logo">
-    <div class="srv">Trading Server</div>
+    <div class="srv">Server Health</div>
     <div class="title">Incident <span>Runbook</span></div>
   </div>
   <div class="sidebar-meta">
@@ -724,12 +724,12 @@
   <!-- HERO -->
   <div class="hero">
     <div class="hero-eyebrow">// incident_runbook_v1.0</div>
-    <h1>Trading Server<br><span>Incident Runbook</span></h1>
-    <p>Structured troubleshooting guide for Linux production trading servers. Each issue includes symptoms, diagnosis commands, step-by-step remediation, and escalation criteria.</p>
+    <h1>Server Health<br><span>Incident Runbook</span></h1>
+    <p>Structured troubleshooting guide for Linux production production servers. Each issue includes symptoms, diagnosis commands, step-by-step remediation, and escalation criteria.</p>
     <div class="hero-tags">
       <span class="tag">Ubuntu 24.04 LTS</span>
       <span class="tag">systemd</span>
-      <span class="tag">/opt/trading</span>
+      <span class="tag">/opt/server-health</span>
       <span class="tag">bash</span>
       <span class="tag">on-call reference</span>
     </div>
@@ -752,7 +752,7 @@
       <div class="how-card">
         <span class="icon">🐢</span>
         <div>
-          <strong>Trader reports slowness</strong>
+          <strong>User reports slowness</strong>
           <p>Start with §7 Quick Reference table — match the symptom to a first command and likely fix.</p>
         </div>
       </div>
@@ -810,7 +810,7 @@
 
         <div class="sub-label">Possible Causes</div>
         <ul class="rb-list">
-          <li>Trading process stuck in a loop or processing backlog</li>
+          <li>Process stuck in a loop or processing backlog</li>
           <li>Market data feed spiking during high-volatility period</li>
           <li>Scheduled cron job (log rotation, backup) running at wrong time</li>
           <li>Memory pressure causing kernel to thrash (%sy elevated)</li>
@@ -818,7 +818,7 @@
 
         <div class="sub-label">Diagnose First</div>
         <div class="diagnose-block">
-          <div class="diagnose-bar">bash — root@trading-server</div>
+          <div class="diagnose-bar">bash — root@server-health</div>
           <code>top -b -n 1 | head -20
 ps aux --sort=-%cpu | head -10
 uptime   <span class="comment"># compare load to: nproc</span></code>
@@ -827,7 +827,7 @@ uptime   <span class="comment"># compare load to: nproc</span></code>
         <div class="sub-label">Remediation Steps</div>
         <ol class="steps">
           <li>Identify the offending process:<div class="cmd">ps aux --sort=-%cpu | head -10</div></li>
-          <li>Confirm it is not a legitimate spike (market open, replay):<div class="cmd">journalctl -u trading --since '10 minutes ago' | tail -20</div></li>
+          <li>Confirm it is not a legitimate spike (market open, replay):<div class="cmd">journalctl -u &lt;service-name&gt; --since '10 minutes ago' | tail -20</div></li>
           <li>Trace what the process is doing:<div class="cmd">strace -p &lt;PID&gt; -c -f</div></li>
           <li>If safe to restart the service:<div class="cmd">systemctl restart &lt;service&gt;</div></li>
           <li>Graceful kill if a runaway script:<div class="cmd">kill -15 &lt;PID&gt;</div></li>
@@ -837,14 +837,14 @@ uptime   <span class="comment"># compare load to: nproc</span></code>
 
         <div class="escalate-box">
           <div class="esc-label">🚨 Escalate When</div>
-          <p>CPU stays above 90% for more than 5 minutes after restart, or the offending process is the core trading engine.</p>
+          <p>CPU stays above 90% for more than 5 minutes after restart, or the offending process is the core production engine.</p>
         </div>
 
         <div class="prevention-box">
           <div class="prev-label">🛡 Prevention</div>
           <ul class="rb-list">
             <li>Set CPU limits per service in systemd: <code>CPUQuota=80%</code></li>
-            <li>Schedule cron jobs outside trading hours (before 07:00 or after 18:00)</li>
+            <li>Schedule cron jobs outside business hours (before 07:00 or after 18:00)</li>
             <li>Monitor CPU trend: <code>sar -u 1 10</code> and alert on sustained > 70%</li>
           </ul>
         </div>
@@ -871,27 +871,27 @@ uptime   <span class="comment"># compare load to: nproc</span></code>
 
         <div class="sub-label">Possible Causes</div>
         <ul class="rb-list">
-          <li>Trading logs writing faster than disk can handle</li>
+          <li>Service logs writing faster than disk can handle</li>
           <li>Database performing full table scans to disk</li>
           <li>Disk partition nearly full causing fragmentation</li>
           <li>Hardware disk degradation or impending failure</li>
-          <li>Backup job running during trading hours</li>
+          <li>Backup job running during business hours</li>
         </ul>
 
         <div class="sub-label">Diagnose First</div>
         <div class="diagnose-block">
-          <div class="diagnose-bar">bash — root@trading-server</div>
+          <div class="diagnose-bar">bash — root@server-health</div>
           <code>iostat -x 1 5        <span class="comment"># look at %util, r_await, w_await</span>
 iotop -o             <span class="comment"># find which process is doing the I/O</span>
-du -h /opt/trading/logs | sort -rh | head -10</code>
+du -h /opt/server-health/logs | sort -rh | head -10</code>
         </div>
 
         <div class="sub-label">Remediation Steps</div>
         <ol class="steps">
           <li>Confirm disk is the bottleneck (not CPU):<div class="cmd">iostat -x 1 5 | grep -v loop</div></li>
           <li>Find which process is hitting the disk:<div class="cmd">iotop -o   <span class="comment"># install: apt install iotop</span></div></li>
-          <li>Check if logs are growing uncontrolled:<div class="cmd">ls -lth /opt/trading/logs/ | head -10</div></li>
-          <li>Clean up old log files immediately:<div class="cmd">find /opt/trading/logs -name '*.log' -mtime +7 -delete</div></li>
+          <li>Check if logs are growing uncontrolled:<div class="cmd">ls -lth /opt/server-health/logs/ | head -10</div></li>
+          <li>Clean up old log files immediately:<div class="cmd">find /opt/server-health/logs -name '*.log' -mtime +7 -delete</div></li>
           <li>Clear systemd journal if large:<div class="cmd">journalctl --vacuum-time=3d</div></li>
           <li>Check disk health (SMART data):<div class="cmd">smartctl -a /dev/sda   <span class="comment"># apt install smartmontools</span></div></li>
           <li>If await > 50ms disk hardware may be failing — escalate immediately</li>
@@ -906,8 +906,8 @@ du -h /opt/trading/logs | sort -rh | head -10</code>
           <div class="prev-label">🛡 Prevention</div>
           <ul class="rb-list">
             <li>Rotate logs daily, keep only 7 days on disk</li>
-            <li>Mount /opt/trading on a dedicated SSD partition</li>
-            <li>Run backups after trading hours: <code>ionice -c3 rsync ...</code></li>
+            <li>Mount /opt/server-health on a dedicated SSD partition</li>
+            <li>Run backups after business hours: <code>ionice -c3 rsync ...</code></li>
             <li>Set log level to WARN in production (not DEBUG)</li>
           </ul>
         </div>
@@ -941,7 +941,7 @@ du -h /opt/trading/logs | sort -rh | head -10</code>
 
         <div class="sub-label">Diagnose First</div>
         <div class="diagnose-block">
-          <div class="diagnose-bar">bash — root@trading-server</div>
+          <div class="diagnose-bar">bash — root@server-health</div>
           <code>vmstat 1 10 | awk '{print $17}'   <span class="comment"># column 17 = steal</span>
 sar -u 1 10                       <span class="comment"># historical CPU inc steal</span>
 top -b -n 1 | grep Cpu            <span class="comment"># check st value</span></code>
@@ -959,13 +959,13 @@ top -b -n 1 | grep Cpu            <span class="comment"># check st value</span><
 
         <div class="escalate-box">
           <div class="esc-label">🚨 Escalate When</div>
-          <p>%steal stays above 10% for 15 minutes and trading latency is measurably impacted.</p>
+          <p>%steal stays above 10% for 15 minutes and latency is measurably impacted.</p>
         </div>
 
         <div class="prevention-box">
           <div class="prev-label">🛡 Prevention</div>
           <ul class="rb-list">
-            <li>Use dedicated or reserved instances for production trading servers</li>
+            <li>Use dedicated or reserved instances for production production servers</li>
             <li>Choose cloud regions/zones with less contention</li>
             <li>Monitor %steal daily as part of health checks</li>
           </ul>
@@ -1002,7 +1002,7 @@ top -b -n 1 | grep Cpu            <span class="comment"># check st value</span><
 
         <div class="sub-label">Possible Causes</div>
         <ul class="rb-list">
-          <li>Memory leak in trading application — RSS grows over time</li>
+          <li>Memory leak in production application — RSS grows over time</li>
           <li>Too many concurrent connections held in memory</li>
           <li>Market data stored in memory not being flushed</li>
           <li>Cache not releasing — buff/cache growing unbounded</li>
@@ -1010,7 +1010,7 @@ top -b -n 1 | grep Cpu            <span class="comment"># check st value</span><
 
         <div class="sub-label">Diagnose First</div>
         <div class="diagnose-block">
-          <div class="diagnose-bar">bash — root@trading-server</div>
+          <div class="diagnose-bar">bash — root@server-health</div>
           <code>free -h
 ps aux --sort=-%mem | head -10
 cat /proc/&lt;PID&gt;/status | grep -E 'VmRSS|VmSwap|VmPeak'</code>
@@ -1021,7 +1021,7 @@ cat /proc/&lt;PID&gt;/status | grep -E 'VmRSS|VmSwap|VmPeak'</code>
           <li>Find which process is consuming most memory:<div class="cmd">ps aux --sort=-%mem | head -10</div></li>
           <li>Watch if memory is growing (possible leak):<div class="cmd">watch -n 5 'ps -p &lt;PID&gt; -o pid,rss,vsz,pmem --no-headers'</div></li>
           <li>Drop page cache safely (does not affect app data):<div class="cmd">echo 1 > /proc/sys/vm/drop_caches</div></li>
-          <li>If trading service is the hog, restart it:<div class="cmd">systemctl restart trading</div></li>
+          <li>If the service is the hog, restart it:<div class="cmd">systemctl restart &lt;service&gt;</div></li>
           <li>Add swap as emergency safety net:<div class="cmd">fallocate -l 2G /swapfile
 chmod 600 /swapfile
 mkswap /swapfile && swapon /swapfile</div></li>
@@ -1064,7 +1064,7 @@ mkswap /swapfile && swapon /swapfile</div></li>
 
         <div class="sub-label">Diagnose First</div>
         <div class="diagnose-block">
-          <div class="diagnose-bar">bash — root@trading-server</div>
+          <div class="diagnose-bar">bash — root@server-health</div>
           <code>dmesg | grep -i 'killed process'
 journalctl -k --since '1 hour ago' | grep -i oom
 cat /proc/&lt;PID&gt;/oom_score   <span class="comment"># higher = more likely to be killed</span></code>
@@ -1074,7 +1074,7 @@ cat /proc/&lt;PID&gt;/oom_score   <span class="comment"># higher = more likely t
         <ol class="steps">
           <li>Identify what was killed and when:<div class="cmd">dmesg | grep -i 'killed process' | tail -10</div></li>
           <li>Restart the killed service immediately:<div class="cmd">systemctl restart &lt;service&gt;</div></li>
-          <li>Protect critical trading process from future OOM kills:<div class="cmd">echo -1000 > /proc/$(pgrep trading)/oom_score_adj</div></li>
+          <li>Protect critical process from future OOM kills:<div class="cmd">echo -1000 > /proc/$(pgrep &lt;app-name&gt;)/oom_score_adj</div></li>
           <li>Add swap to prevent future OOM events:<div class="cmd">fallocate -l 4G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile</div></li>
           <li>Find and address the memory hog:<div class="cmd">ps aux --sort=-%mem | head -10</div></li>
           <li>Check if OOM is recurring (same service every time):<div class="cmd">journalctl -k | grep oom | tail -20</div></li>
@@ -1082,14 +1082,14 @@ cat /proc/&lt;PID&gt;/oom_score   <span class="comment"># higher = more likely t
 
         <div class="escalate-box">
           <div class="esc-label">🚨 Escalate When</div>
-          <p>OOM fires more than once in an hour, or the trading engine itself was killed.</p>
+          <p>OOM fires more than once in an hour, or the production engine itself was killed.</p>
         </div>
 
         <div class="prevention-box">
           <div class="prev-label">🛡 Prevention</div>
           <ul class="rb-list">
-            <li>Always configure swap — minimum 2x RAM for trading servers</li>
-            <li>Set <code>oom_score_adj = -1000</code> for critical trading PIDs at startup</li>
+            <li>Always configure swap — minimum 2x RAM for production servers</li>
+            <li>Set <code>oom_score_adj = -1000</code> for critical service PIDs at startup</li>
             <li>Set <code>MemoryMax</code> in systemd unit files to cap per-service usage</li>
             <li>Alert when memory exceeds 80% — don't wait for OOM</li>
           </ul>
@@ -1117,7 +1117,7 @@ cat /proc/&lt;PID&gt;/oom_score   <span class="comment"># higher = more likely t
 
         <div class="sub-label">Diagnose First</div>
         <div class="diagnose-block">
-          <div class="diagnose-bar">bash — root@trading-server</div>
+          <div class="diagnose-bar">bash — root@server-health</div>
           <code>vmstat 1 5   <span class="comment"># watch si and so — both should be 0 when healthy</span>
 free -h      <span class="comment"># check swap used vs total</span>
 smem -s swap | head -10   <span class="comment"># apt install smem</span></code>
@@ -1171,7 +1171,7 @@ mkswap /swapfile && swapon /swapfile</div></li>
       <div class="issue-body">
         <div class="sub-label">Symptoms</div>
         <ul class="rb-list">
-          <li>Application cannot write log files — orders may fail silently</li>
+          <li>Application cannot write log files — services may fail silently</li>
           <li>df -h shows 90%+ on a partition</li>
           <li>Error messages: "No space left on device"</li>
           <li>New processes cannot start (cannot write PID file)</li>
@@ -1179,9 +1179,9 @@ mkswap /swapfile && swapon /swapfile</div></li>
 
         <div class="sub-label">Diagnose First</div>
         <div class="diagnose-block">
-          <div class="diagnose-bar">bash — root@trading-server</div>
+          <div class="diagnose-bar">bash — root@server-health</div>
           <code>df -h                                         <span class="comment"># which partition?</span>
-du -h /opt/trading | sort -rh | head -10      <span class="comment"># largest dirs</span>
+du -h /opt/server-health | sort -rh | head -10      <span class="comment"># largest dirs</span>
 find / -type f -size +500M 2>/dev/null        <span class="comment"># big files</span>
 lsof | grep deleted | head -20                <span class="comment"># deleted but held open</span></code>
         </div>
@@ -1189,7 +1189,7 @@ lsof | grep deleted | head -20                <span class="comment"># deleted bu
         <div class="sub-label">Remediation Steps</div>
         <ol class="steps">
           <li>Identify full partition and biggest consumers:<div class="cmd">df -h && du -h /var | sort -rh | head -10</div></li>
-          <li>Delete old log files immediately:<div class="cmd">find /opt/trading/logs -name '*.log' -mtime +7 -delete</div></li>
+          <li>Delete old log files immediately:<div class="cmd">find /opt/server-health/logs -name '*.log' -mtime +7 -delete</div></li>
           <li>Clear systemd journal:<div class="cmd">journalctl --vacuum-size=500M</div></li>
           <li>Clean APT cache:<div class="cmd">apt clean</div></li>
           <li>Remove old core dumps:<div class="cmd">find / -name 'core.*' -mtime +1 -delete 2>/dev/null</div></li>
@@ -1199,16 +1199,16 @@ systemctl restart &lt;process-holding-deleted-file&gt;</div></li>
 
         <div class="escalate-box">
           <div class="esc-label">🚨 Escalate When</div>
-          <p>Disk at 95%+ and cannot immediately free space. Trading logs cannot write — this is a service-impacting incident.</p>
+          <p>Disk at 95%+ and cannot immediately free space. Service logs cannot write — this is a service-impacting incident.</p>
         </div>
 
         <div class="prevention-box">
           <div class="prev-label">🛡 Prevention</div>
           <ul class="rb-list">
-            <li>Set up logrotate for /opt/trading/logs — rotate daily, keep 7 days</li>
-            <li>Cron cleanup: <code>find /opt/trading/logs -name '*.log' -mtime +7 -delete</code></li>
+            <li>Set up logrotate for /opt/server-health/logs — rotate daily, keep 7 days</li>
+            <li>Cron cleanup: <code>find /opt/server-health/logs -name '*.log' -mtime +7 -delete</code></li>
             <li>Alert at 80% — never let it reach 90% unmanaged</li>
-            <li>Mount /opt/trading on a separate partition from /</li>
+            <li>Mount /opt/server-health on a separate partition from /</li>
           </ul>
         </div>
       </div>
@@ -1234,7 +1234,7 @@ systemctl restart &lt;process-holding-deleted-file&gt;</div></li>
 
         <div class="sub-label">Diagnose First</div>
         <div class="diagnose-block">
-          <div class="diagnose-bar">bash — root@trading-server</div>
+          <div class="diagnose-bar">bash — root@server-health</div>
           <code>df -i    <span class="comment"># inode usage per filesystem</span>
 <span class="comment"># find dirs with most files:</span>
 find / -xdev -type d | xargs -I{} sh -c \
@@ -1249,7 +1249,7 @@ find / -xdev -type d | xargs -I{} sh -c \
 find /var/tmp -mtime +7 -delete</div></li>
           <li>Check and clean mail spool:<div class="cmd">ls -la /var/spool/mail/
 cat /dev/null > /var/spool/mail/root</div></li>
-          <li>Delete old small log files:<div class="cmd">find /opt/trading/logs -name '*.log' -mtime +3 -delete</div></li>
+          <li>Delete old small log files:<div class="cmd">find /opt/server-health/logs -name '*.log' -mtime +3 -delete</div></li>
           <li>Verify inodes are freed:<div class="cmd">df -i</div></li>
         </ol>
 
@@ -1261,10 +1261,10 @@ cat /dev/null > /var/spool/mail/root</div></li>
         <div class="prevention-box">
           <div class="prev-label">🛡 Prevention</div>
           <ul class="rb-list">
-            <li>Never log one-file-per-trade — use rolling log files</li>
+            <li>Never log one-file-per-request — use rolling log files</li>
             <li>Cron: clean /tmp and /var/tmp weekly</li>
             <li>Monitor inode usage as part of weekly health check</li>
-            <li>Create /opt/trading on its own partition with appropriate inode count</li>
+            <li>Create /opt/server-health on its own partition with appropriate inode count</li>
           </ul>
         </div>
       </div>
@@ -1290,7 +1290,7 @@ cat /dev/null > /var/spool/mail/root</div></li>
 
         <div class="sub-label">Diagnose First</div>
         <div class="diagnose-block">
-          <div class="diagnose-bar">bash — root@trading-server</div>
+          <div class="diagnose-bar">bash — root@server-health</div>
           <code>iostat -x 1 5                    <span class="comment"># r_await, w_await, %util, aqu-sz</span>
 iotop -o                         <span class="comment"># which process is causing I/O</span>
 smartctl -a /dev/sda             <span class="comment"># disk health and error count</span></code>
@@ -1301,8 +1301,8 @@ smartctl -a /dev/sda             <span class="comment"># disk health and error c
           <li>Check which disk is slow:<div class="cmd">iostat -x 1 5 | grep -v loop</div></li>
           <li>Find which process is responsible:<div class="cmd">iotop -o</div></li>
           <li>Check SMART health — look for reallocated sectors:<div class="cmd">smartctl -a /dev/sda | grep -i 'reallocated\|error\|pending'</div></li>
-          <li>Reduce write pressure — lower log verbosity in trading config:<div class="cmd"><span class="comment"># In trading config: set log_level = WARN (not DEBUG)</span></div></li>
-          <li>Use tmpfs for non-critical temp data:<div class="cmd">mount -t tmpfs -o size=512m tmpfs /opt/trading/tmp</div></li>
+          <li>Reduce write pressure — lower log verbosity in app config:<div class="cmd"><span class="comment"># In app config: set log_level = WARN (not DEBUG)</span></div></li>
+          <li>Use tmpfs for non-critical temp data:<div class="cmd">mount -t tmpfs -o size=512m tmpfs /opt/server-health/tmp</div></li>
           <li>If SMART shows errors — disk is failing, replace immediately and escalate</li>
         </ol>
 
@@ -1314,7 +1314,7 @@ smartctl -a /dev/sda             <span class="comment"># disk health and error c
         <div class="prevention-box">
           <div class="prev-label">🛡 Prevention</div>
           <ul class="rb-list">
-            <li>Use SSDs for trading server storage</li>
+            <li>Use SSDs for production server storage</li>
             <li>Separate OS, logs, and market data onto different volumes</li>
             <li>Run smartctl health check weekly via cron</li>
             <li>Use <code>ionice -c3</code> for backup jobs to lower their I/O priority</li>
@@ -1344,7 +1344,7 @@ smartctl -a /dev/sda             <span class="comment"># disk health and error c
       <div class="issue-body">
         <div class="sub-label">Symptoms</div>
         <ul class="rb-list">
-          <li>Traders report a specific function is down (order entry, market data, etc.)</li>
+          <li>Traders report a specific function is down (API, web service, background job, etc.)</li>
           <li>systemctl status shows "failed"</li>
           <li>journalctl shows FATAL or non-zero exit code</li>
           <li>Port is no longer listening (ss -tulnp)</li>
@@ -1352,7 +1352,7 @@ smartctl -a /dev/sda             <span class="comment"># disk health and error c
 
         <div class="sub-label">Diagnose First</div>
         <div class="diagnose-block">
-          <div class="diagnose-bar">bash — root@trading-server</div>
+          <div class="diagnose-bar">bash — root@server-health</div>
           <code>systemctl --failed
 systemctl status &lt;service&gt;
 journalctl -u &lt;service&gt; -n 100 --no-pager</code>
@@ -1405,7 +1405,7 @@ journalctl -u &lt;service&gt; -n 100 --no-pager</code>
 
         <div class="sub-label">Diagnose First</div>
         <div class="diagnose-block">
-          <div class="diagnose-bar">bash — root@trading-server</div>
+          <div class="diagnose-bar">bash — root@server-health</div>
           <code>ps aux | awk '$8=="Z"'                    <span class="comment"># list zombies</span>
 ps -o ppid= -p &lt;ZOMBIE_PID&gt;                <span class="comment"># find parent PID</span>
 ps aux | grep &lt;PPID&gt;                       <span class="comment"># what is the parent?</span></code>
@@ -1423,13 +1423,13 @@ kill -9 &lt;PPID&gt;    <span class="comment"># force — zombies auto-clean aft
 
         <div class="escalate-box">
           <div class="esc-label">🚨 Escalate When</div>
-          <p>Zombie count growing rapidly (> 50), or parent process is the trading engine itself.</p>
+          <p>Zombie count growing rapidly (> 50), or parent process is the production engine itself.</p>
         </div>
 
         <div class="prevention-box">
           <div class="prev-label">🛡 Prevention</div>
           <ul class="rb-list">
-            <li>Ensure trading application properly calls wait()/waitpid() on child exit</li>
+            <li>Ensure application properly calls wait()/waitpid() on child exit</li>
             <li>Use systemd to manage child processes — it reaps zombies automatically</li>
             <li>Alert when zombie count exceeds 5</li>
           </ul>
@@ -1457,7 +1457,7 @@ kill -9 &lt;PPID&gt;    <span class="comment"># force — zombies auto-clean aft
 
         <div class="sub-label">Diagnose First</div>
         <div class="diagnose-block">
-          <div class="diagnose-bar">bash — root@trading-server</div>
+          <div class="diagnose-bar">bash — root@server-health</div>
           <code>lsof | wc -l                                   <span class="comment"># total open FDs</span>
 lsof 2>/dev/null | awk '{print $1}' | sort | uniq -c | sort -rn | head -10
 cat /proc/&lt;PID&gt;/limits | grep 'open files'     <span class="comment"># per-process limit</span></code>
@@ -1503,7 +1503,7 @@ LimitNOFILE=65536</div></li>
     <div class="issue-card" id="net-loss">
       <div class="issue-header" onclick="toggle(this)">
         <span class="severity-dot dot-crit"></span>
-        <span class="issue-title">Packet Loss to Gateway / Exchange</span>
+        <span class="issue-title">Packet Loss to Gateway / Upstream</span>
         <span class="severity-badge sev-crit">Critical</span>
         <span class="metric-tag">> 10% loss warn / > 50% loss crit</span>
         <span class="chevron">▼</span>
@@ -1513,22 +1513,22 @@ LimitNOFILE=65536</div></li>
         <ul class="rb-list">
           <li>Traders report disconnections or feed drops</li>
           <li>ping to gateway shows packet loss</li>
-          <li>Orders not reaching exchange — connection timeouts</li>
+          <li>Service not reaching upstream — connection timeouts</li>
           <li>traceroute shows drops at first or second hop</li>
         </ul>
 
         <div class="sub-label">Diagnose First</div>
         <div class="diagnose-block">
-          <div class="diagnose-bar">bash — root@trading-server</div>
+          <div class="diagnose-bar">bash — root@server-health</div>
           <code>ping -c 20 &lt;gateway-ip&gt;       <span class="comment"># how much loss?</span>
-traceroute &lt;exchange-ip&gt;       <span class="comment"># where does it drop?</span>
+traceroute &lt;upstream-ip&gt;       <span class="comment"># where does it drop?</span>
 ip -s link show eth0           <span class="comment"># NIC error counters</span></code>
         </div>
 
         <div class="sub-label">Remediation Steps</div>
         <ol class="steps">
           <li>Run extended ping to quantify loss:<div class="cmd">ping -c 50 $(ip route | awk '/default/{print $3}')</div></li>
-          <li>Trace route to identify where packets drop:<div class="cmd">traceroute &lt;exchange-ip&gt;</div></li>
+          <li>Trace route to identify where packets drop:<div class="cmd">traceroute &lt;upstream-ip&gt;</div></li>
           <li>Check NIC for hardware errors:<div class="cmd">ip -s link show eth0   <span class="comment"># look for 'errors' or 'dropped'</span></div></li>
           <li>Check link speed and duplex mismatch:<div class="cmd">ethtool eth0</div></li>
           <li>Check dmesg for NIC errors:<div class="cmd">dmesg | grep -i 'eth0\|network\|link'</div></li>
@@ -1538,7 +1538,7 @@ ip -s link show eth0           <span class="comment"># NIC error counters</span>
 
         <div class="escalate-box">
           <div class="esc-label">🚨 Escalate When</div>
-          <p>Any packet loss to exchange — trading halt may be required. Contact network team and exchange immediately.</p>
+          <p>Any packet loss to exchange — service disruption possible. Contact network team immediately.</p>
         </div>
 
         <div class="prevention-box">
@@ -1571,7 +1571,7 @@ ip -s link show eth0           <span class="comment"># NIC error counters</span>
 
         <div class="sub-label">Diagnose First</div>
         <div class="diagnose-block">
-          <div class="diagnose-bar">bash — root@trading-server</div>
+          <div class="diagnose-bar">bash — root@server-health</div>
           <code>ss -an | grep -c CLOSE-WAIT
 ss -anp | grep CLOSE-WAIT | head -20   <span class="comment"># which process?</span></code>
         </div>
@@ -1589,13 +1589,13 @@ echo 6  > /proc/sys/net/ipv4/tcp_keepalive_probes</div></li>
 
         <div class="escalate-box">
           <div class="esc-label">🚨 Escalate When</div>
-          <p>CLOSE_WAIT above 200 and connection pool is exhausted — application cannot accept new trading connections.</p>
+          <p>CLOSE_WAIT above 200 and connection pool is exhausted — application cannot accept new connections.</p>
         </div>
 
         <div class="prevention-box">
           <div class="prev-label">🛡 Prevention</div>
           <ul class="rb-list">
-            <li>Implement proper connection lifecycle in trading application</li>
+            <li>Implement proper connection lifecycle in production application</li>
             <li>Use connection timeout settings in all client libraries</li>
             <li>Enable TCP keepalives at socket level in application code</li>
           </ul>
@@ -1631,7 +1631,7 @@ echo 6  > /proc/sys/net/ipv4/tcp_keepalive_probes</div></li>
 
         <div class="sub-label">Diagnose First</div>
         <div class="diagnose-block">
-          <div class="diagnose-bar">bash — root@trading-server</div>
+          <div class="diagnose-bar">bash — root@server-health</div>
           <code>uptime && nproc                         <span class="comment"># compare load to cores</span>
 vmstat 1 5                              <span class="comment"># 'r'=run queue, 'b'=blocked</span>
 top -b -n 1 | head -20                 <span class="comment"># who is consuming?</span></code>
@@ -1678,10 +1678,10 @@ top -b -n 1 | head -20                 <span class="comment"># who is consuming?
       <tbody>
         <tr><td>System slow, SSH laggy</td><td><code>uptime && top -b -n1 | head -5</code></td><td>Find CPU hog: ps aux --sort=-%cpu</td></tr>
         <tr><td>CPU busy but nothing obvious</td><td><code>top -b -n1 | grep Cpu</code> (check %wa)</td><td>High iowait → run iostat -x 1 5</td></tr>
-        <tr><td>"No space left on device"</td><td><code>df -h</code></td><td>Clean logs: find /opt/trading/logs -mtime +7 -delete</td></tr>
+        <tr><td>"No space left on device"</td><td><code>df -h</code></td><td>Clean logs: find /opt/server-health/logs -mtime +7 -delete</td></tr>
         <tr><td>Disk has space but can't create files</td><td><code>df -i</code></td><td>Inode full → delete small files in /tmp</td></tr>
         <tr><td>App offline, no crash visible</td><td><code>systemctl --failed</code></td><td>Restart: systemctl restart &lt;service&gt;</td></tr>
-        <tr><td>Orders not reaching exchange</td><td><code>ping -c 10 &lt;exchange-ip&gt;</code></td><td>Packet loss → contact network team</td></tr>
+        <tr><td>Service not reaching upstream</td><td><code>ping -c 10 &lt;upstream-ip&gt;</code></td><td>Packet loss → contact network team</td></tr>
         <tr><td>App slow, CPU is idle</td><td><code>iostat -x 1 3</code> (check %util)</td><td>Disk bottleneck → iotop to find hog</td></tr>
         <tr><td>RAM nearly full</td><td><code>free -h && ps aux --sort=-%mem | head -5</code></td><td>Restart hog or add swap</td></tr>
         <tr><td>App fails to open connections</td><td><code>lsof | wc -l</code></td><td>FD leak → restart service, raise LimitNOFILE</td></tr>
@@ -1708,7 +1708,7 @@ top -b -n 1 | head -20                 <span class="comment"># who is consuming?
         <tr><td>Senior Engineer</td><td><span class="fill"></span></td><td><span class="fill"></span></td><td>5 min unresolved</td></tr>
         <tr><td>Network Team</td><td><span class="fill"></span></td><td><span class="fill"></span></td><td>Any packet loss</td></tr>
         <tr><td>Cloud Provider</td><td><span class="fill"></span></td><td><span class="fill"></span></td><td>%steal > 10%</td></tr>
-        <tr><td>Exchange Support</td><td><span class="fill"></span></td><td><span class="fill"></span></td><td>Order path down</td></tr>
+        <tr><td>Upstream Support</td><td><span class="fill"></span></td><td><span class="fill"></span></td><td>Upstream path down</td></tr>
         <tr><td>Security Team</td><td><span class="fill"></span></td><td><span class="fill"></span></td><td>Suspicious process</td></tr>
       </tbody>
     </table>
@@ -1716,8 +1716,8 @@ top -b -n 1 | head -20                 <span class="comment"># who is consuming?
 
   <!-- FOOTER -->
   <div class="page-footer">
-    <span>Trading Server Incident Runbook — v1.0</span>
-    <span>Ubuntu 24.04 LTS · systemd · /opt/trading</span>
+    <span>Server Health Incident Runbook — v1.0</span>
+    <span>Ubuntu 24.04 LTS · systemd · /opt/server-health</span>
   </div>
 
 </main>
