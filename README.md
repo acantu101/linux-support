@@ -30,8 +30,6 @@ Reports are saved to `/opt/server-health/logs/health_report_<timestamp>.txt` so 
 
 ## 📖 Runbook
 
-## 📖 Runbook
-
 After cloning, open the runbook locally:
 
 ```bash
