@@ -595,9 +595,14 @@ fi
 echo ""
 info "Services that have restarted recently:"
 divider
-journalctl --since "1 hour ago" 2>/dev/null | grep -i "started\|restarted\|respawn" | tail -10 | while IFS= read -r line; do
-  echo "  $line"
-done
+RESTART_LINES=$(journalctl --since "1 hour ago" 2>/dev/null | grep -i "started\|restarted\|respawn" | tail -10)
+if [ -z "$RESTART_LINES" ]; then
+  ok "0 service restart events in the last hour"
+else
+  echo "$RESTART_LINES" | while IFS= read -r line; do
+    echo "  $line"
+  done
+fi
 
 echo ""
 info "FATAL errors in logs (last 10 min):"
