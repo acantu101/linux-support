@@ -24,7 +24,7 @@ A comprehensive bash diagnostic script for Linux trading servers. Generates a fu
 
 ## Overview
 
-When a trader calls saying *"everything is slow"* you have minutes to diagnose the problem. This script gives you a full-system snapshot in one command — covering CPU, memory, disk, network, services, logs, and more — with clear `✅ OK`, `⚠️ WARN`, and `🔴 CRIT` indicators so you know exactly where to look.
+When a client calls saying *"everything is slow"* you have minutes to diagnose the problem. This script gives you a full-system snapshot in one command — covering CPU, memory, disk, network, services, logs, and more — with clear `✅ OK`, `⚠️ WARN`, and `🔴 CRIT` indicators so you know exactly where to look.
 
 Reports are saved to `/opt/trading/logs/health_report_<timestamp>.txt` so you can build a history of incidents over time.
 
