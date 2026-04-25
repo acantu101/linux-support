@@ -531,9 +531,9 @@ investigate_crashed_service() {
     echo "  Last PID   : ${MAIN_PID:-unknown}"
     echo ""
     echo "------------------------------------------------------"
-    echo "  4. LAST 50 LOG ENTRIES"
+    echo "  4. LAST 10 LOG ENTRIES"
     echo "------------------------------------------------------"
-    journalctl -u "$SVC" -n 50 --no-pager 2>/dev/null
+    journalctl -u "$SVC" -n 10 --no-pager 2>/dev/null
     echo ""
     echo "------------------------------------------------------"
     echo "  5. DEPENDENCIES"
