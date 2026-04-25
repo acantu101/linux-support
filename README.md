@@ -30,7 +30,20 @@ Reports are saved to `/opt/server-health/logs/health_report_<timestamp>.txt` so 
 
 ## 📖 Runbook
 
-[📖 View Runbook](https://htmlpreview.github.io/?https://github.com/<user>/<repo>/blob/main/RUNBOOK.html)
+## 📖 Runbook
+
+After cloning, open the runbook locally:
+
+```bash
+# Mac
+open RUNBOOK.html
+
+# Linux
+xdg-open RUNBOOK.html
+
+# Windows
+start RUNBOOK.html
+```
 
 ---
 
